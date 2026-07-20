@@ -26,7 +26,12 @@ async function bootstrap() {
   const rawOrigins = configService.get<string>('CORS_ORIGINS');
   const allowedOrigins = rawOrigins
     ? rawOrigins.split(',')
-    : ['http://localhost:3000', 'http://localhost:8081'];
+    : ['http://localhost:3000'];
+
+  if (!allowedOrigins.includes('http://localhost:8081')) {
+    allowedOrigins.push('http://localhost:8081');
+  }
+
   app.enableCors({
     origin: allowedOrigins,
     credentials: true,
