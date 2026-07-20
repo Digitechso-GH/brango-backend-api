@@ -1,0 +1,20 @@
+model Empresa {
+  id        String    @id @default(uuid())
+  nombre    String
+  ruc       String    @unique
+  clientes  Cliente[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Cliente {
+  id        String  @id @default(uuid())
+  nombre    String
+  empresaId String
+  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Restrict)
+
+  pedidos Pedido[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

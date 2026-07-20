@@ -1,0 +1,36 @@
+model Usuario {
+  id       String         @id @default(uuid())
+  email    String         @unique
+  nombre   String
+  password String
+  rolId    String
+  rol      Rol            @relation(fields: [rolId], references: [id], onDelete: Restrict)
+  chofer   DriverProfile?
+
+  orderTimelines OrderTimeline[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Rol {
+  id       String    @id @default(uuid())
+  code     String    @unique // Ej: SYS_ADMIN, SYS_OPERATOR, SYS_DRIVER
+  nombre   String
+  usuarios Usuario[]
+}
+
+model DriverProfile {
+  id        String  @id @default(uuid())
+  usuarioId String  @unique
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  unidad   String? // Ej: "Unidad 02"
+  telefono String? // Para contacto WhatsApp
+
+  pedidosAsignados  Pedido[]
+  locationSnapshots LocationSnapshot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

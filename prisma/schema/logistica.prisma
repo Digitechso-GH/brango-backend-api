@@ -1,0 +1,99 @@
+enum EstadoPedido {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  OBSERVED
+}
+
+enum GeocodingStatus {
+  PENDING
+  VALIDATED
+  FAILED
+}
+
+model Pedido {
+  id     String       @id @default(uuid())
+  codigo String       @unique // Ej: PED-1029
+  guia   String? // Ej: 004521
+  estado EstadoPedido @default(PENDING)
+
+  // Geocoding & Address
+  direccionOriginal String
+  latitud           Float?
+  longitud          Float?
+  geocodingStatus   GeocodingStatus @default(PENDING)
+
+  // Relaciones
+  clienteId String
+  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+
+  driverId String?
+  chofer   DriverProfile? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  // Flags Integraciones
+  whatsappInTransitSentAt DateTime?
+  whatsappDeliveredSentAt DateTime?
+  routeStartedAt          DateTime?
+
+  evidencias        Evidence[]
+  orderTimelines    OrderTimeline[]
+  locationSnapshots LocationSnapshot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([estado])
+  @@index([driverId])
+  @@index([clienteId])
+}
+
+model OrderTimeline {
+  id       String @id @default(uuid())
+  pedidoId String
+  pedido   Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  estadoAnterior EstadoPedido?
+  estadoNuevo    EstadoPedido
+
+  userId  String
+  usuario Usuario @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pedidoId])
+  @@index([userId])
+}
+
+model LocationSnapshot {
+  id       String        @id @default(uuid())
+  driverId String
+  chofer   DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  pedidoId String?
+  pedido   Pedido? @relation(fields: [pedidoId], references: [id], onDelete: SetNull)
+
+  latitud  Float
+  longitud Float
+  evento   String? // Ej: "START", "5_MIN_INTERVAL", "DELIVERED"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([driverId])
+  @@index([pedidoId])
+}
+
+model Evidence {
+  id       String @id @default(uuid())
+  pedidoId String
+  pedido   Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  s3Url      String
+  fileSizeKb Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pedidoId])
+}
