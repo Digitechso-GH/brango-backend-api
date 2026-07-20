@@ -10,6 +10,12 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { TrackingService } from './tracking.service';
+import { ROLES } from '../users/users.constants';
+import {
+  TRACKING_ROOMS,
+  TRACKING_EVENTS,
+  LOCATION_EVENTS,
+} from './tracking.constants';
 
 @WebSocketGateway({
   cors: {
@@ -42,9 +48,13 @@ export class TrackingGateway
         return;
       }
 
-      if (token === 'operator-mock-token') {
-        client.data.role = 'SYS_OPERATOR';
-        await client.join('operators');
+      const mockToken = this.configService.get<string>(
+        'DEV_MOCK_OPERATOR_TOKEN',
+        'operator-mock-token',
+      );
+      if (token === mockToken) {
+        client.data.role = ROLES.SYS_OPERATOR;
+        await client.join(TRACKING_ROOMS.OPERATORS);
         console.log(`Socket conectado (MOCK OPERATOR): ${client.id}`);
         return;
       }
@@ -60,7 +70,7 @@ export class TrackingGateway
       client.data.userId = payload.sub;
       client.data.role = payload.rol;
 
-      if (payload.rol === 'SYS_DRIVER') {
+      if (payload.rol === ROLES.SYS_DRIVER) {
         const driver = await this.prisma.driverProfile.findUnique({
           where: { usuarioId: payload.sub },
         });
@@ -71,10 +81,10 @@ export class TrackingGateway
         }
 
         client.data.driverId = driver.id;
-        await client.join('drivers');
+        await client.join(TRACKING_ROOMS.DRIVERS);
       } else {
         // Operadores se unen al cuarto para escuchar actualizaciones en tiempo real
-        await client.join('operators');
+        await client.join(TRACKING_ROOMS.OPERATORS);
       }
 
       console.log(
@@ -93,7 +103,7 @@ export class TrackingGateway
     console.log(`Socket desconectado: ${client.id}`);
   }
 
-  @SubscribeMessage('location_update')
+  @SubscribeMessage(TRACKING_EVENTS.LOCATION_UPDATE)
   async handleLocationUpdate(
     client: Socket,
     payload: {
@@ -104,28 +114,30 @@ export class TrackingGateway
     },
   ) {
     // Solo los choferes pueden reportar ubicación
-    if (client.data.role !== 'SYS_DRIVER' || !client.data.driverId) {
+    if (client.data.role !== ROLES.SYS_DRIVER || !client.data.driverId) {
       return;
     }
 
     const { latitud, longitud, evento, pedidoId } = payload;
 
     // Retransmitir en tiempo real a los operadores
-    this.server.to('operators').emit('driver_location', {
-      driverId: client.data.driverId,
-      latitud,
-      longitud,
-      evento: evento || '30_SEC_INTERVAL',
-      pedidoId,
-      updatedAt: new Date(),
-    });
+    this.server
+      .to(TRACKING_ROOMS.OPERATORS)
+      .emit(TRACKING_EVENTS.DRIVER_LOCATION, {
+        driverId: client.data.driverId,
+        latitud,
+        longitud,
+        evento: evento || LOCATION_EVENTS.INTERVAL_30_SEC,
+        pedidoId,
+        updatedAt: new Date(),
+      });
 
     // Registrar en base de datos aplicando la lógica de persistencia controlada (throttling)
     await this.trackingService.recordSnapshot(
       client.data.driverId,
       latitud,
       longitud,
-      evento || '30_SEC_INTERVAL',
+      evento || LOCATION_EVENTS.INTERVAL_30_SEC,
       pedidoId,
     );
   }

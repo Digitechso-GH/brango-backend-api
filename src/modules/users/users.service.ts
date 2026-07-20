@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
+import { ROLES } from './users.constants';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -13,9 +14,9 @@ export class UsersService implements OnModuleInit {
 
   private async seedRoles() {
     const roles = [
-      { code: 'SYS_ADMIN', nombre: 'Administrador del Sistema' },
-      { code: 'SYS_OPERATOR', nombre: 'Operador de Logística' },
-      { code: 'SYS_DRIVER', nombre: 'Chofer / Transportista' },
+      { code: ROLES.SYS_ADMIN, nombre: 'Administrador del Sistema' },
+      { code: ROLES.SYS_OPERATOR, nombre: 'Operador de Logística' },
+      { code: ROLES.SYS_DRIVER, nombre: 'Chofer / Transportista' },
     ];
 
     for (const role of roles) {
@@ -32,7 +33,7 @@ export class UsersService implements OnModuleInit {
 
   private async seedUsers() {
     const adminRole = await this.prisma.rol.findUnique({
-      where: { code: 'SYS_ADMIN' },
+      where: { code: ROLES.SYS_ADMIN },
     });
     if (!adminRole) return;
 

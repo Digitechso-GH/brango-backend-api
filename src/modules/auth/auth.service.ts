@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import * as bcrypt from 'bcryptjs';
 import { LoginDto } from './dto/login.dto';
+import { ROLES } from '../users/users.constants';
 
 @Injectable()
 export class AuthService {
@@ -39,7 +40,7 @@ export class AuthService {
     let driverId = undefined;
     let unidad = undefined;
 
-    if (user.rol.code === 'SYS_DRIVER') {
+    if (user.rol.code === ROLES.SYS_DRIVER) {
       const fullUser = await this.usersService.findById(user.id);
       if (fullUser?.chofer) {
         driverId = fullUser.chofer.id;

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { LOCATION_EVENTS } from './tracking.constants';
 
 @Injectable()
 export class TrackingService {
@@ -13,7 +14,7 @@ export class TrackingService {
     pedidoId?: string,
   ) {
     // Si es un evento clave de negocio, lo guardamos inmediatamente
-    if (evento && evento !== '30_SEC_INTERVAL') {
+    if (evento && evento !== LOCATION_EVENTS.INTERVAL_30_SEC) {
       return this.prisma.locationSnapshot.create({
         data: {
           driverId,
@@ -46,7 +47,7 @@ export class TrackingService {
         driverId,
         latitud,
         longitud,
-        evento: '5_MIN_INTERVAL',
+        evento: LOCATION_EVENTS.INTERVAL_5_MIN,
         pedidoId: pedidoId || null,
       },
     });

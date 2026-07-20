@@ -1,0 +1,5 @@
+export const ROLES = {
+  SYS_ADMIN: 'SYS_ADMIN',
+  SYS_OPERATOR: 'SYS_OPERATOR',
+  SYS_DRIVER: 'SYS_DRIVER',
+} as const;
