@@ -116,8 +116,13 @@ export class OrdersService {
     });
   }
 
-  async findAll() {
+  async findAll(driverId?: string) {
+    const where: any = {};
+    if (driverId) {
+      where.driverId = driverId;
+    }
     return this.prisma.pedido.findMany({
+      where,
       include: {
         cliente: { include: { empresa: true } },
         chofer: { include: { usuario: true } },
@@ -305,7 +310,7 @@ export class OrdersService {
       where: { id },
     });
     if (!order) {
-      throw new NotFoundException("Pedido no encontrado");
+      throw new NotFoundException('Pedido no encontrado');
     }
 
     if (dto.clienteId) {
@@ -313,7 +318,7 @@ export class OrdersService {
         where: { id: dto.clienteId },
       });
       if (!client) {
-        throw new BadRequestException("El cliente especificado no existe");
+        throw new BadRequestException('El cliente especificado no existe');
       }
     }
 
@@ -322,14 +327,18 @@ export class OrdersService {
         where: { id: dto.driverId },
       });
       if (!driver) {
-        throw new BadRequestException("El chofer especificado no existe");
+        throw new BadRequestException('El chofer especificado no existe');
       }
     }
 
     const updateData: any = { ...dto };
 
     // Si actualiza dirección y no manda lat/long, resolver geocoding
-    if (dto.direccionOriginal && dto.latitud === undefined && dto.longitud === undefined) {
+    if (
+      dto.direccionOriginal &&
+      dto.latitud === undefined &&
+      dto.longitud === undefined
+    ) {
       const { lat, lng } = this.resolveGeocoding(undefined, undefined);
       updateData.latitud = lat;
       updateData.longitud = lng;

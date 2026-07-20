@@ -10,6 +10,7 @@ import {
   UploadedFile,
   BadRequestException,
   Headers,
+  Query,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -31,8 +32,8 @@ export class OrdersController {
   }
 
   @Get()
-  async findAll() {
-    return this.ordersService.findAll();
+  async findAll(@Query('driverId') driverId?: string) {
+    return this.ordersService.findAll(driverId);
   }
 
   @Get(':id')

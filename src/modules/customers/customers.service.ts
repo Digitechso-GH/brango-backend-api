@@ -103,7 +103,9 @@ export class CustomersService {
         where: { ruc: dto.ruc },
       });
       if (existing) {
-        throw new BadRequestException('Ya existe otra empresa registrada con ese RUC');
+        throw new BadRequestException(
+          'Ya existe otra empresa registrada con ese RUC',
+        );
       }
     }
 
