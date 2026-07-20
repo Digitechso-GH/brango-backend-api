@@ -57,6 +57,14 @@ export class OrdersController {
     return this.ordersService.updateStatus(id, dto);
   }
 
+  @Post(':id/evidence')
+  async addEvidence(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('urlImagen') urlImagen: string,
+  ) {
+    return this.ordersService.addEvidence(id, urlImagen);
+  }
+
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
   async importOrders(

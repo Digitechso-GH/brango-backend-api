@@ -350,6 +350,21 @@ export class OrdersService {
     });
   }
 
+  async addEvidence(pedidoId: string, urlImagen: string) {
+    const order = await this.prisma.pedido.findUnique({
+      where: { id: pedidoId },
+    });
+    if (!order) {
+      throw new NotFoundException("Pedido no encontrado");
+    }
+    return this.prisma.evidence.create({
+      data: {
+        pedidoId,
+        s3Url: urlImagen,
+      },
+    });
+  }
+
   private resolveGeocoding(latInput?: number, lngInput?: number) {
     let lat = latInput;
     let lng = lngInput;
