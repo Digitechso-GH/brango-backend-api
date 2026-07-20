@@ -21,11 +21,23 @@ export class CustomersService {
       );
     }
 
-    return this.prisma.empresa.create({
-      data: {
-        nombre: dto.nombre,
-        ruc: dto.ruc,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const company = await tx.empresa.create({
+        data: {
+          nombre: dto.nombre,
+          ruc: dto.ruc,
+        },
+      });
+
+      // Crear automáticamente el cliente/sucursal de entrega principal
+      await tx.cliente.create({
+        data: {
+          nombre: `${dto.nombre} - Matriz`,
+          empresaId: company.id,
+        },
+      });
+
+      return company;
     });
   }
 
@@ -74,19 +86,31 @@ export class CustomersService {
   async deleteCompany(id: string) {
     const company = await this.prisma.empresa.findUnique({
       where: { id },
-      include: { clientes: true },
+      include: {
+        clientes: {
+          include: { pedidos: true },
+        },
+      },
     });
     if (!company) {
       throw new NotFoundException('Empresa no encontrada');
     }
 
-    if (company.clientes.length > 0) {
+    const hasOrders = company.clientes.some((c) => c.pedidos.length > 0);
+    if (hasOrders) {
       throw new BadRequestException(
-        'No se puede eliminar la empresa porque tiene clientes/sucursales asociadas.',
+        'No se puede eliminar la empresa porque tiene pedidos asociados en sus sucursales.',
       );
     }
 
-    return this.prisma.empresa.delete({ where: { id } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.cliente.deleteMany({
+        where: { empresaId: id },
+      });
+      return tx.empresa.delete({
+        where: { id },
+      });
+    });
   }
 
   async updateCompany(id: string, dto: CreateCompanyDto) {
