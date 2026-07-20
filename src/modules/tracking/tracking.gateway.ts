@@ -42,6 +42,13 @@ export class TrackingGateway
         return;
       }
 
+      if (token === 'operator-mock-token') {
+        client.data.role = 'SYS_OPERATOR';
+        await client.join('operators');
+        console.log(`Socket conectado (MOCK OPERATOR): ${client.id}`);
+        return;
+      }
+
       // 2. Verificar token JWT
       const secret = this.configService.get<string>(
         'JWT_SECRET',
