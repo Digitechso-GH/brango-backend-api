@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateOrderDto } from './dto/update-order.dto';
 import { EstadoPedido, GeocodingStatus } from '@prisma/client';
 import { REQUIRED_ORDER_FIELDS } from './orders.constants';
 import * as XLSX from 'xlsx';
@@ -296,6 +297,47 @@ export class OrdersService {
         createdOrders.push(order);
       }
       return createdOrders;
+    });
+  }
+
+  async update(id: string, dto: UpdateOrderDto) {
+    const order = await this.prisma.pedido.findUnique({
+      where: { id },
+    });
+    if (!order) {
+      throw new NotFoundException("Pedido no encontrado");
+    }
+
+    if (dto.clienteId) {
+      const client = await this.prisma.cliente.findUnique({
+        where: { id: dto.clienteId },
+      });
+      if (!client) {
+        throw new BadRequestException("El cliente especificado no existe");
+      }
+    }
+
+    if (dto.driverId) {
+      const driver = await this.prisma.driverProfile.findUnique({
+        where: { id: dto.driverId },
+      });
+      if (!driver) {
+        throw new BadRequestException("El chofer especificado no existe");
+      }
+    }
+
+    const updateData: any = { ...dto };
+
+    // Si actualiza dirección y no manda lat/long, resolver geocoding
+    if (dto.direccionOriginal && dto.latitud === undefined && dto.longitud === undefined) {
+      const { lat, lng } = this.resolveGeocoding(undefined, undefined);
+      updateData.latitud = lat;
+      updateData.longitud = lng;
+    }
+
+    return this.prisma.pedido.update({
+      where: { id },
+      data: updateData,
     });
   }
 

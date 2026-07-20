@@ -14,6 +14,7 @@ import {
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateOrderDto } from './dto/update-order.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('orders')
@@ -37,6 +38,14 @@ export class OrdersController {
   @Get(':id')
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.ordersService.findOne(id);
+  }
+
+  @Put(':id')
+  async update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateOrderDto,
+  ) {
+    return this.ordersService.update(id, dto);
   }
 
   @Put(':id/status')
