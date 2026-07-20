@@ -8,6 +8,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DriversModule } from './modules/drivers/drivers.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { TrackingModule } from './modules/tracking/tracking.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { OrdersModule } from './modules/orders/orders.module';
     CustomersModule,
     DriversModule,
     OrdersModule,
+    TrackingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
