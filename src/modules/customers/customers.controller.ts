@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
   Body,
   Param,
@@ -28,6 +29,14 @@ export class CustomersController {
   @Delete('companies/:id')
   async deleteCompany(@Param('id', ParseUUIDPipe) id: string) {
     return this.customersService.deleteCompany(id);
+  }
+
+  @Put('companies/:id')
+  async updateCompany(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateCompanyDto,
+  ) {
+    return this.customersService.updateCompany(id, dto);
   }
 
   @Post('clients')

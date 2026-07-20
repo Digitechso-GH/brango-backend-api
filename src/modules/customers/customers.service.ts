@@ -89,6 +89,33 @@ export class CustomersService {
     return this.prisma.empresa.delete({ where: { id } });
   }
 
+  async updateCompany(id: string, dto: CreateCompanyDto) {
+    const company = await this.prisma.empresa.findUnique({
+      where: { id },
+    });
+    if (!company) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    // Si cambia el RUC, verificar que no exista duplicado
+    if (dto.ruc !== company.ruc) {
+      const existing = await this.prisma.empresa.findUnique({
+        where: { ruc: dto.ruc },
+      });
+      if (existing) {
+        throw new BadRequestException('Ya existe otra empresa registrada con ese RUC');
+      }
+    }
+
+    return this.prisma.empresa.update({
+      where: { id },
+      data: {
+        nombre: dto.nombre,
+        ruc: dto.ruc,
+      },
+    });
+  }
+
   async deleteClient(id: string) {
     const client = await this.prisma.cliente.findUnique({
       where: { id },
