@@ -12,10 +12,11 @@ enum GeocodingStatus {
 }
 
 model Pedido {
-  id     String       @id @default(uuid())
-  codigo String       @unique // Ej: PED-1029
-  guia   String? // Ej: 004521
-  estado EstadoPedido @default(PENDING)
+  id                    String          @id @default(uuid())
+  codigo                String          @unique // Ej: PED-1029
+  guia                  String? // Ej: 004521
+  documentoDestinatario String
+  estado                EstadoPedido    @default(PENDING)
 
   // Geocoding & Address
   direccionOriginal String

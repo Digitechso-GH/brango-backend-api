@@ -24,7 +24,9 @@ async function bootstrap() {
 
   // Configuración CORS restringida y parametrizada
   const rawOrigins = configService.get<string>('CORS_ORIGINS');
-  const allowedOrigins = rawOrigins ? rawOrigins.split(',') : ['http://localhost:3000'];
+  const allowedOrigins = rawOrigins
+    ? rawOrigins.split(',')
+    : ['http://localhost:3000'];
   app.enableCors({
     origin: allowedOrigins,
     credentials: true,
@@ -33,4 +35,4 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`Server running on: http://localhost:${port}`);
 }
-bootstrap();
+void bootstrap();
