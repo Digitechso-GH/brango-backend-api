@@ -28,13 +28,24 @@ export class AuthService {
     return user;
   }
 
-  login(user: any) {
+  async login(user: any) {
     const payload = {
       sub: user.id,
       email: user.email,
       nombre: user.nombre,
       rol: user.rol.code,
     };
+
+    let driverId = undefined;
+    let unidad = undefined;
+
+    if (user.rol.code === 'SYS_DRIVER') {
+      const fullUser = await this.usersService.findById(user.id);
+      if (fullUser?.chofer) {
+        driverId = fullUser.chofer.id;
+        unidad = fullUser.chofer.unidad;
+      }
+    }
 
     return {
       token: this.jwtService.sign(payload),
@@ -43,6 +54,8 @@ export class AuthService {
         nombre: user.nombre,
         email: user.email,
         rol: user.rol.code,
+        driverId,
+        unidad,
       },
     };
   }
