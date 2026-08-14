@@ -4,38 +4,77 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  IsIn,
 } from 'class-validator';
 
 export class CreateOrderDto {
-  @IsString({ message: 'El código de pedido debe ser un texto' })
-  @IsNotEmpty({ message: 'El código de pedido es obligatorio' })
-  codigo: string;
+  @IsString()
+  @IsNotEmpty({ message: 'Code is required' })
+  code: string;
 
-  @IsString({ message: 'La guía debe ser un texto' })
+  @IsString()
   @IsOptional()
-  guia?: string;
+  waybill?: string;
 
-  @IsString({ message: 'El documento del destinatario debe ser un texto' })
-  @IsNotEmpty({ message: 'El documento del destinatario es obligatorio' })
-  documentoDestinatario: string;
-
-  @IsString({ message: 'La dirección original debe ser un texto' })
-  @IsNotEmpty({ message: 'La dirección de entrega es obligatoria' })
-  direccionOriginal: string;
-
-  @IsNumber({}, { message: 'La latitud debe ser un número' })
+  @IsString()
+  @IsUUID('all', { message: 'originBranchId must be a valid UUID' })
   @IsOptional()
-  latitud?: number;
+  originBranchId?: string;
 
-  @IsNumber({}, { message: 'La longitud debe ser un número' })
+  @IsString()
+  @IsIn(['COMPANY', 'INDIVIDUAL'])
   @IsOptional()
-  longitud?: number;
+  recipientCustomerType?: 'COMPANY' | 'INDIVIDUAL';
 
-  @IsUUID('all', { message: 'El ID del cliente debe ser un UUID válido' })
-  @IsNotEmpty({ message: 'El cliente es obligatorio' })
-  clienteId: string;
+  @IsString()
+  @IsOptional()
+  companyRuc?: string;
 
-  @IsUUID('all', { message: 'El ID del chofer debe ser un UUID válido' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
+  @IsUUID('all', { message: 'customerId must be a valid UUID' })
+  @IsOptional()
+  customerId?: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'recipientDocument is required' })
+  recipientDocument: string;
+
+  @IsString()
+  @IsOptional()
+  recipientName?: string;
+
+  @IsString()
+  @IsOptional()
+  recipientPhone?: string;
+
+  @IsString()
+  @IsOptional()
+  recipientEmail?: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'rawAddress is required' })
+  rawAddress: string;
+
+  @IsString()
+  @IsOptional()
+  formattedAddress?: string;
+
+  @IsNumber()
+  @IsOptional()
+  latitude?: number;
+
+  @IsNumber()
+  @IsOptional()
+  longitude?: number;
+
+  @IsUUID('all', { message: 'driverId must be a valid UUID' })
   @IsOptional()
   driverId?: string;
+
+  @IsString()
+  @IsOptional()
+  warehouseContact?: string;
 }

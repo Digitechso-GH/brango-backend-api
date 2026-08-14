@@ -13,14 +13,14 @@ export class DriversService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateDriverDto) {
-    const existing = await this.prisma.usuario.findUnique({
+    const existing = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
     if (existing) {
       throw new BadRequestException('El correo electrónico ya está registrado');
     }
 
-    const driverRole = await this.prisma.rol.findUnique({
+    const driverRole = await this.prisma.role.findUnique({
       where: { code: 'SYS_DRIVER' },
     });
     if (!driverRole) {
@@ -32,22 +32,22 @@ export class DriversService {
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
     return this.prisma.$transaction(async (tx) => {
-      const user = await tx.usuario.create({
+      const user = await tx.user.create({
         data: {
           email: dto.email,
-          nombre: dto.nombre,
+          name: dto.name,
           password: hashedPassword,
-          rolId: driverRole.id,
+          roleId: driverRole.id,
         },
       });
 
       const profile = await tx.driverProfile.create({
         data: {
-          usuarioId: user.id,
-          unidad: dto.unidad || null,
-          telefono: dto.telefono || null,
+          userId: user.id,
+          unit: dto.unit || null,
+          phone: dto.phone || null,
         },
-        include: { usuario: true },
+        include: { user: true },
       });
 
       return profile;
@@ -57,15 +57,14 @@ export class DriversService {
   async update(id: string, dto: UpdateDriverDto) {
     const profile = await this.prisma.driverProfile.findUnique({
       where: { id },
-      include: { usuario: true },
+      include: { user: true },
     });
     if (!profile) {
       throw new NotFoundException('Chofer no encontrado');
     }
 
-    // Si edita el email, verificar unicidad
-    if (dto.email && dto.email !== profile.usuario.email) {
-      const existing = await this.prisma.usuario.findUnique({
+    if (dto.email && dto.email !== profile.user.email) {
+      const existing = await this.prisma.user.findUnique({
         where: { email: dto.email },
       });
       if (existing) {
@@ -76,20 +75,20 @@ export class DriversService {
     }
 
     const userUpdateData: any = {};
-    if (dto.nombre) userUpdateData.nombre = dto.nombre;
+    if (dto.name) userUpdateData.name = dto.name;
     if (dto.email) userUpdateData.email = dto.email;
     if (dto.password) {
       userUpdateData.password = await bcrypt.hash(dto.password, 10);
     }
 
     const profileUpdateData: any = {};
-    if (dto.unidad !== undefined) profileUpdateData.unidad = dto.unidad;
-    if (dto.telefono !== undefined) profileUpdateData.telefono = dto.telefono;
+    if (dto.unit !== undefined) profileUpdateData.unit = dto.unit;
+    if (dto.phone !== undefined) profileUpdateData.phone = dto.phone;
 
     return this.prisma.$transaction(async (tx) => {
       if (Object.keys(userUpdateData).length > 0) {
-        await tx.usuario.update({
-          where: { id: profile.usuarioId },
+        await tx.user.update({
+          where: { id: profile.userId },
           data: userUpdateData,
         });
       }
@@ -97,7 +96,7 @@ export class DriversService {
       const updatedProfile = await tx.driverProfile.update({
         where: { id },
         data: profileUpdateData,
-        include: { usuario: true },
+        include: { user: true },
       });
 
       return updatedProfile;
@@ -106,15 +105,15 @@ export class DriversService {
 
   async findAll() {
     return this.prisma.driverProfile.findMany({
-      include: { usuario: true },
-      orderBy: { usuario: { nombre: 'asc' } },
+      include: { user: true },
+      orderBy: { user: { name: 'asc' } },
     });
   }
 
   async findOne(id: string) {
     const profile = await this.prisma.driverProfile.findUnique({
       where: { id },
-      include: { usuario: true },
+      include: { user: true },
     });
     if (!profile) {
       throw new NotFoundException('Chofer no encontrado');
@@ -125,22 +124,20 @@ export class DriversService {
   async delete(id: string) {
     const profile = await this.prisma.driverProfile.findUnique({
       where: { id },
-      include: { pedidosAsignados: true },
+      include: { assignments: true },
     });
     if (!profile) {
       throw new NotFoundException('Chofer no encontrado');
     }
 
-    // Verificar si tiene pedidos asignados activos/históricos
-    if (profile.pedidosAsignados.length > 0) {
+    if (profile.assignments.length > 0) {
       throw new BadRequestException(
         'No se puede eliminar al chofer porque tiene pedidos asignados.',
       );
     }
 
-    // Al eliminar el usuario, la relación en DriverProfile se elimina por Cascade
-    return this.prisma.usuario.delete({
-      where: { id: profile.usuarioId },
+    return this.prisma.user.delete({
+      where: { id: profile.userId },
     });
   }
 }

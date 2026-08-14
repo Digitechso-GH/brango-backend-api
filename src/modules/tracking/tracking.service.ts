@@ -8,26 +8,23 @@ export class TrackingService {
 
   async recordSnapshot(
     driverId: string,
-    latitud: number,
-    longitud: number,
-    evento?: string,
-    pedidoId?: string,
+    latitude: number,
+    longitude: number,
+    event?: string,
+    routeAssignmentId?: string,
   ) {
-    // Si es un evento clave de negocio, lo guardamos inmediatamente
-    if (evento && evento !== LOCATION_EVENTS.INTERVAL_30_SEC) {
+    if (event && event !== LOCATION_EVENTS.INTERVAL_30_SEC) {
       return this.prisma.locationSnapshot.create({
         data: {
           driverId,
-          latitud,
-          longitud,
-          evento,
-          pedidoId: pedidoId || null,
+          latitude,
+          longitude,
+          event,
+          routeAssignmentId: routeAssignmentId || null,
         },
       });
     }
 
-    // Si es una coordenada de intervalo rutinario (throttling):
-    // Verificamos la marca de tiempo del último snapshot de este chofer
     const lastSnapshot = await this.prisma.locationSnapshot.findFirst({
       where: { driverId },
       orderBy: { createdAt: 'desc' },
@@ -36,28 +33,25 @@ export class TrackingService {
     if (lastSnapshot) {
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
       if (lastSnapshot.createdAt > fiveMinutesAgo) {
-        // Ignoramos la escritura en base de datos si fue hace menos de 5 minutos
         return null;
       }
     }
 
-    // Si han pasado más de 5 minutos o no tiene snapshots, guardamos
     return this.prisma.locationSnapshot.create({
       data: {
         driverId,
-        latitud,
-        longitud,
-        evento: LOCATION_EVENTS.INTERVAL_5_MIN,
-        pedidoId: pedidoId || null,
+        latitude,
+        longitude,
+        event: LOCATION_EVENTS.INTERVAL_5_MIN,
+        routeAssignmentId: routeAssignmentId || null,
       },
     });
   }
 
   async getLatestDriverLocations() {
-    // Busca el último snapshot de cada chofer activo para mostrar en la torre de control
     const drivers = await this.prisma.driverProfile.findMany({
       include: {
-        usuario: { select: { nombre: true, email: true } },
+        user: { select: { name: true, email: true } },
       },
     });
 
@@ -70,12 +64,12 @@ export class TrackingService {
       if (lastLoc) {
         locations.push({
           driverId: driver.id,
-          nombre: driver.usuario.nombre,
-          unidad: driver.unidad,
-          telefono: driver.telefono,
-          latitud: lastLoc.latitud,
-          longitud: lastLoc.longitud,
-          evento: lastLoc.evento,
+          name: driver.user.name,
+          unit: driver.unit,
+          phone: driver.phone,
+          latitude: lastLoc.latitude,
+          longitude: lastLoc.longitude,
+          event: lastLoc.event,
           updatedAt: lastLoc.createdAt,
         });
       }

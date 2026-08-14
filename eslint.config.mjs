@@ -33,6 +33,13 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
       "prettier/prettier": ["error", { endOfLine: "auto" }],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "LogicalExpression[operator='||'] > MemberExpression[property.name=/Id$/]",
+          message: "Entity identifiers must be normalized in the API layer; fallbacks using || on *Id properties are strictly forbidden."
+        }
+      ],
     },
   },
 );

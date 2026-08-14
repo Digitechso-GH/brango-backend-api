@@ -1,16 +1,26 @@
-import { IsEnum, IsNotEmpty, IsUUID } from 'class-validator';
-import { EstadoPedido } from '@prisma/client';
+import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { AssignmentStatus } from '@prisma/client';
 
 export class UpdateOrderStatusDto {
-  @IsEnum(EstadoPedido, {
-    message: 'El estado debe ser PENDING, IN_TRANSIT, DELIVERED o OBSERVED',
+  @IsEnum(AssignmentStatus, {
+    message: 'Status must be PENDING, IN_TRANSIT, DELIVERED or OBSERVED',
   })
-  @IsNotEmpty({ message: 'El nuevo estado es obligatorio' })
-  estado: EstadoPedido;
+  @IsNotEmpty({ message: 'Status is required' })
+  status: AssignmentStatus;
 
-  @IsUUID('all', {
-    message: 'El ID del usuario responsable debe ser un UUID válido',
-  })
-  @IsNotEmpty({ message: 'El ID del usuario responsable es obligatorio' })
-  userId: string;
+  @IsString()
+  @IsOptional()
+  userId?: string;
+
+  @IsNumber()
+  @IsOptional()
+  latitude?: number;
+
+  @IsNumber()
+  @IsOptional()
+  longitude?: number;
+
+  @IsString()
+  @IsOptional()
+  reasonText?: string;
 }

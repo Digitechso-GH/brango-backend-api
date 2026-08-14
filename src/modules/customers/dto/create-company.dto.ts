@@ -1,12 +1,12 @@
 import { IsNotEmpty, IsString, Length } from 'class-validator';
 
 export class CreateCompanyDto {
-  @IsString({ message: 'El nombre de la empresa debe ser un texto' })
-  @IsNotEmpty({ message: 'El nombre de la empresa es obligatorio' })
-  nombre: string;
+  @IsString({ message: 'Company name must be a string' })
+  @IsNotEmpty({ message: 'Company name is required' })
+  name: string;
 
-  @IsString({ message: 'El RUC de la empresa debe ser un texto' })
-  @IsNotEmpty({ message: 'El RUC es obligatorio' })
-  @Length(11, 11, { message: 'El RUC debe tener exactamente 11 caracteres' })
+  @IsString({ message: 'RUC must be a string' })
+  @IsNotEmpty({ message: 'RUC is required' })
+  @Length(11, 11, { message: 'RUC must be exactly 11 characters' })
   ruc: string;
 }

@@ -1,27 +1,27 @@
 import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateDriverDto {
-  @IsString({ message: 'El nombre debe ser un texto' })
+  @IsString({ message: 'Name must be a string' })
   @IsOptional()
-  nombre?: string;
+  name?: string;
 
   @IsEmail(
     {},
-    { message: 'El correo electrónico debe tener un formato válido' },
+    { message: 'Email must be a valid format' },
   )
   @IsOptional()
   email?: string;
 
-  @IsString({ message: 'La contraseña debe ser un texto' })
+  @IsString({ message: 'Password must be a string' })
   @IsOptional()
-  @MinLength(6, { message: 'La contraseña debe tener al menos 6 caracteres' })
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
 
-  @IsString({ message: 'La unidad asignada debe ser un texto' })
+  @IsString({ message: 'Unit must be a string' })
   @IsOptional()
-  unidad?: string;
+  unit?: string;
 
-  @IsString({ message: 'El teléfono debe ser un texto' })
+  @IsString({ message: 'Phone must be a string' })
   @IsOptional()
-  telefono?: string;
+  phone?: string;
 }

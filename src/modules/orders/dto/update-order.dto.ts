@@ -1,31 +1,73 @@
-import { IsNumber, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsNumber, IsOptional, IsString, IsUUID, IsIn } from 'class-validator';
 
 export class UpdateOrderDto {
-  @IsString({ message: 'La guía debe ser un texto' })
+  @IsString()
   @IsOptional()
-  guia?: string;
+  code?: string;
 
-  @IsString({ message: 'El documento del destinatario debe ser un texto' })
+  @IsString()
   @IsOptional()
-  documentoDestinatario?: string;
+  waybill?: string;
 
-  @IsString({ message: 'La dirección original debe ser un texto' })
+  @IsString()
+  @IsUUID('all', { message: 'originBranchId must be a valid UUID' })
   @IsOptional()
-  direccionOriginal?: string;
+  originBranchId?: string;
 
-  @IsNumber({}, { message: 'La latitud debe ser un número' })
+  @IsString()
+  @IsIn(['COMPANY', 'INDIVIDUAL'])
   @IsOptional()
-  latitud?: number;
+  recipientCustomerType?: 'COMPANY' | 'INDIVIDUAL';
 
-  @IsNumber({}, { message: 'La longitud debe ser un número' })
+  @IsString()
   @IsOptional()
-  longitud?: number;
+  companyRuc?: string;
 
-  @IsUUID('all', { message: 'El ID del cliente debe ser un UUID válido' })
+  @IsString()
   @IsOptional()
-  clienteId?: string;
+  companyName?: string;
 
-  @IsUUID('all', { message: 'El ID del chofer debe ser un UUID válido' })
+  @IsUUID('all', { message: 'customerId must be a valid UUID' })
+  @IsOptional()
+  customerId?: string;
+
+  @IsString()
+  @IsOptional()
+  recipientDocument?: string;
+
+  @IsString()
+  @IsOptional()
+  recipientName?: string;
+
+  @IsString()
+  @IsOptional()
+  recipientPhone?: string;
+
+  @IsString()
+  @IsOptional()
+  recipientEmail?: string;
+
+  @IsString()
+  @IsOptional()
+  rawAddress?: string;
+
+  @IsString()
+  @IsOptional()
+  formattedAddress?: string;
+
+  @IsNumber()
+  @IsOptional()
+  latitude?: number;
+
+  @IsNumber()
+  @IsOptional()
+  longitude?: number;
+
+  @IsUUID('all', { message: 'driverId must be a valid UUID' })
   @IsOptional()
   driverId?: string;
+
+  @IsString()
+  @IsOptional()
+  warehouseContact?: string;
 }

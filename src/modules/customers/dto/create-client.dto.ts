@@ -1,11 +1,11 @@
 import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
 
 export class CreateClientDto {
-  @IsString({ message: 'El nombre del cliente debe ser un texto' })
-  @IsNotEmpty({ message: 'El nombre del cliente es obligatorio' })
-  nombre: string;
+  @IsString({ message: 'Customer name must be a string' })
+  @IsNotEmpty({ message: 'Customer name is required' })
+  name: string;
 
-  @IsUUID('all', { message: 'El ID de la empresa debe ser un UUID válido' })
-  @IsNotEmpty({ message: 'La empresa asociada es obligatoria' })
-  empresaId: string;
+  @IsUUID('all', { message: 'companyId must be a valid UUID' })
+  @IsNotEmpty({ message: 'companyId is required' })
+  companyId: string;
 }

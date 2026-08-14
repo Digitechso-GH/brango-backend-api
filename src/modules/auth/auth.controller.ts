@@ -12,4 +12,10 @@ export class AuthController {
     const user = await this.authService.validateUser(loginDto);
     return await this.authService.login(user);
   }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(@Body('refreshToken') refreshToken: string) {
+    return this.authService.refresh(refreshToken);
+  }
 }

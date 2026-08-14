@@ -7,27 +7,27 @@ import {
 } from 'class-validator';
 
 export class CreateDriverDto {
-  @IsString({ message: 'El nombre debe ser un texto' })
-  @IsNotEmpty({ message: 'El nombre es obligatorio' })
-  nombre: string;
+  @IsString({ message: 'Name must be a string' })
+  @IsNotEmpty({ message: 'Name is required' })
+  name: string;
 
   @IsEmail(
     {},
-    { message: 'El correo electrónico debe tener un formato válido' },
+    { message: 'Email must be a valid format' },
   )
-  @IsNotEmpty({ message: 'El correo electrónico es obligatorio' })
+  @IsNotEmpty({ message: 'Email is required' })
   email: string;
 
-  @IsString({ message: 'La contraseña debe ser un texto' })
-  @IsNotEmpty({ message: 'La contraseña es obligatoria' })
-  @MinLength(6, { message: 'La contraseña debe tener al menos 6 caracteres' })
+  @IsString({ message: 'Password must be a string' })
+  @IsNotEmpty({ message: 'Password is required' })
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
   password: string;
 
-  @IsString({ message: 'La unidad asignada debe ser un texto' })
+  @IsString({ message: 'Unit must be a string' })
   @IsOptional()
-  unidad?: string;
+  unit?: string;
 
-  @IsString({ message: 'El teléfono debe ser un texto' })
+  @IsString({ message: 'Phone must be a string' })
   @IsOptional()
-  telefono?: string;
+  phone?: string;
 }

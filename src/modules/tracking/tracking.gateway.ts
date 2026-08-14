@@ -8,6 +8,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TrackingService } from './tracking.service';
 import { ROLES } from '../users/users.constants';
@@ -19,13 +20,15 @@ import {
 
 @WebSocketGateway({
   cors: {
-    origin: '*', // En producción se restringe a las variables de entorno allowed origins
+    origin: '*',
     credentials: true,
   },
 })
 export class TrackingGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
+  private readonly logger = new Logger(TrackingGateway.name);
+
   @WebSocketServer()
   server: Server;
 
@@ -38,10 +41,7 @@ export class TrackingGateway
 
   async handleConnection(client: Socket) {
     try {
-      // 1. Extraer token JWT del handshake
-      const token =
-        client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.split(' ')[1];
+      const token = client.handshake.auth?.token;
 
       if (!token) {
         client.disconnect();
@@ -54,91 +54,140 @@ export class TrackingGateway
       );
       if (token === mockToken) {
         client.data.role = ROLES.SYS_OPERATOR;
-        await client.join(TRACKING_ROOMS.OPERATORS);
-        console.log(`Socket conectado (MOCK OPERATOR): ${client.id}`);
+        await client.join(TRACKING_ROOMS.OPERATOR_LIVE);
+        this.logger.log(`Socket conectado (MOCK OPERATOR): ${client.id}`);
         return;
       }
 
-      // 2. Verificar token JWT
       const secret = this.configService.get<string>(
         'JWT_SECRET',
         'super_secret_key_change_me_in_production',
       );
       const payload = await this.jwtService.verifyAsync(token, { secret });
 
-      // 3. Vincular datos del chofer o del operador a la conexión
       client.data.userId = payload.sub;
       client.data.role = payload.rol;
 
       if (payload.rol === ROLES.SYS_DRIVER) {
         const driver = await this.prisma.driverProfile.findUnique({
-          where: { usuarioId: payload.sub },
+          where: { userId: payload.sub },
         });
 
-        if (!driver) {
+        if (driver) {
+          client.data.driverId = driver.id;
+          await client.join(`driver:${driver.id}`);
+          this.logger.log(`Driver socket conectado y asignado a driver:${driver.id}`);
+        } else {
+          this.logger.warn(`Conexión con rol SYS_DRIVER pero sin perfil de conductor para userId ${payload.sub}`);
           client.disconnect();
           return;
         }
-
-        client.data.driverId = driver.id;
-        await client.join(TRACKING_ROOMS.DRIVERS);
-      } else {
-        // Operadores se unen al cuarto para escuchar actualizaciones en tiempo real
-        await client.join(TRACKING_ROOMS.OPERATORS);
+      } else if (payload.rol === ROLES.SYS_ADMIN || payload.rol === ROLES.SYS_OPERATOR) {
+        await client.join(TRACKING_ROOMS.OPERATOR_LIVE);
       }
 
-      console.log(
-        `Socket conectado: ${client.id} - Usuario: ${payload.nombre} (Rol: ${payload.rol})`,
-      );
-    } catch (err) {
-      console.log(
-        'Error de conexión en Socket.io, desconectando:',
-        err.message,
-      );
+      if (payload.rol === ROLES.SYS_DRIVER) {
+        this.logger.log(
+          `Socket conectado (DRIVER): ${client.id} - Usuario: ${payload.name} (DriverID: ${client.data.driverId})`,
+        );
+      } else {
+        this.logger.log(
+          `Socket conectado (STAFF): ${client.id} - Usuario: ${payload.name} (Rol: ${payload.rol})`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.log('Error de conexión en Socket.io, desconectando:', err.message);
       client.disconnect();
     }
   }
 
   handleDisconnect(client: Socket) {
-    console.log(`Socket desconectado: ${client.id}`);
+    this.logger.log(`Socket desconectado: ${client.id}`);
   }
 
   @SubscribeMessage(TRACKING_EVENTS.LOCATION_UPDATE)
+  @SubscribeMessage('chofer:ubicacion:actualizar')
   async handleLocationUpdate(
     client: Socket,
     payload: {
-      latitud: number;
-      longitud: number;
+      latitude: number;
+      longitude: number;
+      event?: string;
+      routeAssignmentId?: string;
+      // Compatibilidad con payload antiguo:
+      latitud?: number;
+      longitud?: number;
       evento?: string;
       pedidoId?: string;
     },
   ) {
-    // Solo los choferes pueden reportar ubicación
-    if (client.data.role !== ROLES.SYS_DRIVER || !client.data.driverId) {
+    // Si se recibe el evento legacy de compatibilidad, loggear warning de deprecación (14 días de gracia)
+    const isLegacyEvent = !payload.latitude && payload.latitud;
+    if (isLegacyEvent) {
+      this.logger.warn(
+        `Legacy event/properties received from socket ${client.id}. Notice: support for these legacy events and properties will be deprecated after 14 consecutive days of inactivity.`,
+      );
+    }
+
+    const driverId = client.data.driverId;
+    if (!driverId) {
+      this.logger.warn(`Intento de enviar ubicación sin driverId válido para socket: ${client.id}`);
       return;
     }
 
-    const { latitud, longitud, evento, pedidoId } = payload;
+    const latitude = payload.latitude;
+    const longitude = payload.longitude;
+    const event = payload.event;
+    const routeAssignmentId = payload.routeAssignmentId;
 
-    // Retransmitir en tiempo real a los operadores
-    this.server
-      .to(TRACKING_ROOMS.OPERATORS)
-      .emit(TRACKING_EVENTS.DRIVER_LOCATION, {
-        driverId: client.data.driverId,
-        latitud,
-        longitud,
-        evento: evento || LOCATION_EVENTS.INTERVAL_30_SEC,
-        pedidoId,
-        updatedAt: new Date(),
+    if (!latitude || !longitude) {
+      this.logger.warn(`Coordenadas inválidas recibidas en actualización de ubicación de socket: ${client.id}`);
+      return;
+    }
+
+    let orderId: string | null = null;
+    if (routeAssignmentId) {
+      const assignment = await this.prisma.routeAssignment.findUnique({
+        where: { id: routeAssignmentId },
+        select: { orderId: true },
       });
+      if (assignment) {
+        orderId = assignment.orderId;
+      }
+    }
 
-    // Registrar en base de datos aplicando la lógica de persistencia controlada (throttling)
+    const locationData = {
+      driverId,
+      latitude,
+      longitude,
+      event: event || LOCATION_EVENTS.INTERVAL_30_SEC,
+      routeAssignmentId: routeAssignmentId || null,
+      updatedAt: new Date(),
+    };
+
+    // Retransmitir a salas de operadores y ordenes
+    this.server.to(TRACKING_ROOMS.OPERATOR_LIVE).emit(TRACKING_EVENTS.DRIVER_LOCATION, locationData);
+    if (orderId) {
+      this.server.to(`order:${orderId}`).emit(TRACKING_EVENTS.DRIVER_LOCATION, locationData);
+    }
+
+    // Persistir el snapshot
     await this.trackingService.recordSnapshot(
-      client.data.driverId,
-      latitud,
-      longitud,
-      evento || LOCATION_EVENTS.INTERVAL_30_SEC,
-      pedidoId,
+      driverId,
+      latitude,
+      longitude,
+      event || LOCATION_EVENTS.INTERVAL_30_SEC,
+      routeAssignmentId,
     );
+  }
+
+  notifyOrderAssigned(driverId: string, orderId: string) {
+    if (this.server) {
+      this.server.to(`driver:${driverId}`).emit('order_assigned', {
+        driverId,
+        orderId,
+        timestamp: new Date(),
+      });
+    }
   }
 }

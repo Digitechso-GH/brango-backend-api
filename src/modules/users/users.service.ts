@@ -14,59 +14,59 @@ export class UsersService implements OnModuleInit {
 
   private async seedRoles() {
     const roles = [
-      { code: ROLES.SYS_ADMIN, nombre: 'Administrador del Sistema' },
-      { code: ROLES.SYS_OPERATOR, nombre: 'Operador de Logística' },
-      { code: ROLES.SYS_DRIVER, nombre: 'Chofer / Transportista' },
+      { code: ROLES.SYS_ADMIN, name: 'Administrador del Sistema' },
+      { code: ROLES.SYS_OPERATOR, name: 'Operador de Logística' },
+      { code: ROLES.SYS_DRIVER, name: 'Chofer / Transportista' },
     ];
 
     for (const role of roles) {
-      await this.prisma.rol.upsert({
+      await this.prisma.role.upsert({
         where: { code: role.code },
-        update: { nombre: role.nombre },
+        update: { name: role.name },
         create: {
           code: role.code,
-          nombre: role.nombre,
+          name: role.name,
         },
       });
     }
   }
 
   private async seedUsers() {
-    const adminRole = await this.prisma.rol.findUnique({
+    const adminRole = await this.prisma.role.findUnique({
       where: { code: ROLES.SYS_ADMIN },
     });
     if (!adminRole) return;
 
-    const count = await this.prisma.usuario.count();
+    const count = await this.prisma.user.count();
     if (count === 0) {
       const hashedPassword = await bcrypt.hash('admin123', 10);
-      await this.prisma.usuario.create({
+      await this.prisma.user.create({
         data: {
           email: 'admin@brango.com',
-          nombre: 'Administrador Semilla',
+          name: 'Administrador Semilla',
           password: hashedPassword,
-          rolId: adminRole.id,
+          roleId: adminRole.id,
         },
       });
     }
   }
 
   async findByEmail(email: string) {
-    return this.prisma.usuario.findUnique({
+    return this.prisma.user.findUnique({
       where: { email },
-      include: { rol: true },
+      include: { role: true },
     });
   }
 
   async findById(id: string) {
-    return this.prisma.usuario.findUnique({
+    return this.prisma.user.findUnique({
       where: { id },
-      include: { rol: true, chofer: true },
+      include: { role: true, driver: true },
     });
   }
 
   async getRoleByCode(code: string) {
-    return this.prisma.rol.findUnique({
+    return this.prisma.role.findUnique({
       where: { code },
     });
   }

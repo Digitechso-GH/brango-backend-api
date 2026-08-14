@@ -1,19 +1,31 @@
-model Empresa {
-  id        String    @id @default(uuid())
-  nombre    String
-  ruc       String    @unique
-  clientes  Cliente[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+model Company {
+  id        String     @id @default(uuid())
+  name      String
+  ruc       String     @unique
+  customers Customer[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 }
 
-model Cliente {
-  id        String  @id @default(uuid())
-  nombre    String
-  empresaId String
-  empresa   Empresa @relation(fields: [empresaId], references: [id], onDelete: Restrict)
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  orders    Order[]
 
-  pedidos Pedido[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  name      String
+  address   String
+  latitude  Float
+  longitude Float
+  active    Boolean  @default(true)
+  orders    Order[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

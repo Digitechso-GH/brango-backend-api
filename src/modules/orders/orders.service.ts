@@ -1,148 +1,251 @@
 import {
   Injectable,
-  BadRequestException,
   NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const TIMEZONE = 'America/Lima';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { EstadoPedido, GeocodingStatus } from '@prisma/client';
-import { REQUIRED_ORDER_FIELDS } from './orders.constants';
-import * as XLSX from 'xlsx';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { ReorderAssignmentsDto } from './dto/reorder-assignments.dto';
+import { RecipientCustomerType, GeocodingStatus, AssignmentStatus, Prisma } from '@prisma/client';
+import { TrackingGateway } from '../tracking/tracking.gateway';
+import { GeocodingService } from './services/geocoding.service';
+import { OrdersClientResolverService } from './services/orders-client-resolver.service';
+import { OrdersExcelParserService } from './services/orders-excel-parser.service';
+import { OrdersImportService } from './services/orders-import.service';
+
+const DEFAULT_ORDER_INCLUDE = {
+  originBranch: true,
+  customer: { include: { company: true } },
+  assignments: {
+    orderBy: [{ date: 'desc' as const }, { createdAt: 'desc' as const }],
+    take: 1,
+    include: {
+      driver: { include: { user: true } },
+      events: true,
+      evidences: true,
+    },
+  },
+};
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(OrdersService.name);
 
-  async create(dto: CreateOrderDto, creatorId: string) {
-    const existing = await this.prisma.pedido.findUnique({
-      where: { codigo: dto.codigo },
-    });
-    if (existing) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly trackingGateway: TrackingGateway,
+    private readonly geocodingService: GeocodingService,
+    private readonly clientResolverService: OrdersClientResolverService,
+    private readonly excelParserService: OrdersExcelParserService,
+    private readonly importService: OrdersImportService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
+
+  private async getValidOperatorId(creatorId?: string): Promise<string> {
+    if (creatorId) {
+      const userExists = await this.prisma.user.findUnique({ where: { id: creatorId } });
+      if (userExists) return creatorId;
+    }
+    const defaultOperator = await this.prisma.user.findFirst();
+    if (!defaultOperator) {
       throw new BadRequestException(
-        `El código de pedido ${dto.codigo} ya existe`,
+        'No existe ningún usuario en el sistema para asociar la operación de pedidos',
       );
     }
+    return defaultOperator.id;
+  }
 
-    const client = await this.prisma.cliente.findUnique({
-      where: { id: dto.clienteId },
-    });
-    if (!client) {
-      throw new BadRequestException(
-        `El cliente con ID ${dto.clienteId} no existe`,
-      );
+  async create(dto: CreateOrderDto, creatorId?: string) {
+    const finalCreatorId = await this.getValidOperatorId(creatorId);
+    const finalCode = dto.code?.trim();
+    if (!finalCode) {
+      throw new BadRequestException('El Nº de pedido es obligatorio');
     }
 
-    if (dto.driverId) {
-      const driver = await this.prisma.driverProfile.findUnique({
-        where: { id: dto.driverId },
+    const exists = await this.prisma.order.findUnique({ where: { code: finalCode } });
+    if (exists) {
+      throw new BadRequestException(`El Nº de pedido "${finalCode}" ya se encuentra registrado`);
+    }
+
+    const cleanAddress = this.geocodingService.extractAddressFromUrl(dto.rawAddress);
+    const geo = await this.geocodingService.resolveGeocodingFromUrl(cleanAddress, dto.latitude, dto.longitude);
+
+    let finalFormatted = dto.formattedAddress;
+    if (!finalFormatted || finalFormatted.startsWith('http')) {
+      finalFormatted = cleanAddress && !cleanAddress.startsWith('http') ? cleanAddress : undefined;
+    }
+
+    const resolvedCustomerId = await this.clientResolverService.resolveOrCreateClient({
+      recipientCustomerType: dto.recipientCustomerType === 'COMPANY' ? RecipientCustomerType.COMPANY : RecipientCustomerType.INDIVIDUAL,
+      recipientDocument: dto.recipientDocument,
+      recipientName: dto.recipientName,
+      companyName: dto.companyName,
+      companyRuc: dto.companyRuc,
+      customerId: dto.customerId,
+    });
+
+    return this.prisma.$transaction(async (tx) => {
+      const createdOrder = await tx.order.create({
+        data: {
+          code: finalCode,
+          waybill: dto.waybill,
+          recipientCustomerType: dto.recipientCustomerType === 'COMPANY' ? RecipientCustomerType.COMPANY : RecipientCustomerType.INDIVIDUAL,
+          recipientDocument: (dto.recipientDocument || '').trim(),
+          recipientName: dto.recipientName,
+          recipientPhone: dto.recipientPhone,
+          recipientEmail: dto.recipientEmail,
+          rawAddress: dto.rawAddress,
+          formattedAddress: finalFormatted,
+          latitude: geo.lat,
+          longitude: geo.lng,
+          geocodingStatus: geo.status as GeocodingStatus,
+          originBranchId: dto.originBranchId,
+          customerId: resolvedCustomerId,
+          warehouseContact: dto.warehouseContact || null,
+        },
       });
-      if (!driver) {
-        throw new BadRequestException(
-          `El chofer con ID ${dto.driverId} no existe`,
-        );
+
+      if (dto.driverId) {
+        const targetDate = new Date();
+        const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+        const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+
+        const count = await tx.routeAssignment.count({
+          where: {
+            driverId: dto.driverId,
+            date: {
+              gte: startOfDay,
+              lte: endOfDay,
+            },
+          },
+        });
+
+        const assignment = await tx.routeAssignment.create({
+          data: {
+            orderId: createdOrder.id,
+            driverId: dto.driverId,
+            date: new Date(),
+            sequenceIndex: count,
+            status: AssignmentStatus.PENDING,
+          },
+        });
+
+        await tx.orderEvent.create({
+          data: {
+            routeAssignmentId: assignment.id,
+            type: 'REGISTERED',
+            actor: finalCreatorId,
+          },
+        });
+
+        this.trackingGateway.notifyOrderAssigned(dto.driverId, createdOrder.id);
+      }
+
+      return tx.order.findUnique({
+        where: { id: createdOrder.id },
+        include: DEFAULT_ORDER_INCLUDE,
+      });
+    });
+  }
+
+  async executeAutoClosure(whereClause: Prisma.RouteAssignmentWhereInput): Promise<number> {
+    const activeAssignments = await this.prisma.routeAssignment.findMany({
+      where: whereClause,
+    });
+
+    if (activeAssignments.length === 0) return 0;
+    let successCount = 0;
+
+    for (const assignment of activeAssignments) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.routeAssignment.update({
+            where: { id: assignment.id },
+            data: {
+              status: AssignmentStatus.OBSERVED,
+              reasonText: 'AUTO_CLOSED_EOD',
+            },
+          });
+
+          await tx.orderEvent.create({
+            data: {
+              routeAssignmentId: assignment.id,
+              type: 'OBSERVED',
+              actor: 'system',
+              metadata: {
+                reasonText: 'AUTO_CLOSED_EOD',
+                note: 'Cierre automático de fin de jornada operativa',
+              },
+            },
+          });
+        });
+        successCount++;
+      } catch (err: any) {
+        this.logger.error(`Failed to auto-close assignment ${assignment.id}: ${err.message}`);
       }
     }
+    return successCount;
+  }
 
-    let finalCreatorId = creatorId;
-    const creatorExists = await this.prisma.usuario.findUnique({
-      where: { id: creatorId },
-    });
-    if (!creatorExists) {
-      const firstUser = await this.prisma.usuario.findFirst();
-      if (firstUser) {
-        finalCreatorId = firstUser.id;
+  async findAll(driverId?: string, todayOnly?: boolean | string, dateStr?: string) {
+    const whereCondition: any = {};
+
+    if (todayOnly === true || todayOnly === 'true' || dateStr) {
+      const targetDate = dateStr ? new Date(dateStr) : new Date();
+      const startOfDay = dayjs(targetDate).tz(TIMEZONE).startOf('day').toDate();
+      const endOfDay = dayjs(targetDate).tz(TIMEZONE).endOf('day').toDate();
+
+      if (driverId) {
+        // 2da Capa de Protección: Auto-cierre de asignaciones colgadas de días anteriores
+        await this.executeAutoClosure({
+          driverId,
+          date: { lt: startOfDay },
+          status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
+        });
+
+        whereCondition.assignments = {
+          some: { driverId },
+        };
+        whereCondition.OR = [
+          { createdAt: { gte: startOfDay, lte: endOfDay } },
+          { assignments: { some: { driverId, status: { in: ['PENDING', 'IN_TRANSIT'] } } } },
+        ];
       } else {
-        throw new BadRequestException(
-          'No hay ningún usuario registrado para asociar la auditoría del pedido',
-        );
+        whereCondition.createdAt = {
+          gte: startOfDay,
+          lte: endOfDay,
+        };
       }
+    } else if (driverId) {
+      whereCondition.assignments = {
+        some: { driverId },
+      };
     }
 
-    const { lat, lng } = this.resolveGeocoding(dto.latitud, dto.longitud);
-
-    return this.prisma.$transaction(async (tx) => {
-      const order = await tx.pedido.create({
-        data: {
-          codigo: dto.codigo,
-          guia: dto.guia || null,
-          documentoDestinatario: dto.documentoDestinatario,
-          direccionOriginal: dto.direccionOriginal,
-          latitud: lat,
-          longitud: lng,
-          geocodingStatus: GeocodingStatus.VALIDATED,
-          clienteId: dto.clienteId,
-          driverId: dto.driverId || null,
-        },
-      });
-
-      await tx.orderTimeline.create({
-        data: {
-          pedidoId: order.id,
-          estadoNuevo: EstadoPedido.PENDING,
-          userId: finalCreatorId,
-        },
-      });
-
-      return order;
-    });
-  }
-
-  async updateStatus(id: string, dto: UpdateOrderStatusDto) {
-    const order = await this.prisma.pedido.findUnique({
-      where: { id },
-    });
-    if (!order) {
-      throw new NotFoundException('Pedido no encontrado');
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      const updatedOrder = await tx.pedido.update({
-        where: { id },
-        data: { estado: dto.estado },
-      });
-
-      await tx.orderTimeline.create({
-        data: {
-          pedidoId: id,
-          estadoAnterior: order.estado,
-          estadoNuevo: dto.estado,
-          userId: dto.userId,
-        },
-      });
-
-      return updatedOrder;
-    });
-  }
-
-  async findAll(driverId?: string) {
-    const where: any = {};
-    if (driverId) {
-      where.driverId = driverId;
-    }
-    return this.prisma.pedido.findMany({
-      where,
-      include: {
-        cliente: { include: { empresa: true } },
-        chofer: { include: { usuario: true } },
-      },
+    return this.prisma.order.findMany({
+      where: whereCondition,
+      include: DEFAULT_ORDER_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
 
   async findOne(id: string) {
-    const order = await this.prisma.pedido.findUnique({
+    const order = await this.prisma.order.findUnique({
       where: { id },
-      include: {
-        cliente: { include: { empresa: true } },
-        chofer: { include: { usuario: true } },
-        orderTimelines: {
-          include: { usuario: true },
-          orderBy: { createdAt: 'desc' },
-        },
-        evidencias: true,
-      },
+      include: DEFAULT_ORDER_INCLUDE,
     });
     if (!order) {
       throw new NotFoundException('Pedido no encontrado');
@@ -150,234 +253,327 @@ export class OrdersService {
     return order;
   }
 
-  async importExcel(fileBuffer: Buffer, operatorId: string) {
-    const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) {
-      throw new BadRequestException(
-        'El archivo Excel está vacío o no contiene hojas',
-      );
-    }
+  async importExcel(buffer: Buffer, operatorId?: string) {
+    const finalOperatorId = await this.getValidOperatorId(operatorId);
+    const validRows = await this.excelParserService.parseAndValidateExcelBuffer(buffer);
+    return this.importService.executeAtomicImport(validRows, finalOperatorId);
+  }
 
-    const worksheet = workbook.Sheets[sheetName];
-    // Convertir a JSON filas crudas
-    const rawRows = XLSX.utils.sheet_to_json<any>(worksheet);
-    if (rawRows.length === 0) {
-      throw new BadRequestException(
-        'El archivo Excel no contiene filas de datos',
-      );
-    }
+  private async buildOrderUpdateData(id: string, dto: UpdateOrderDto): Promise<any> {
+    const { companyRuc, companyName, ...rest } = dto as any;
+    const updateData: any = {};
 
-    let finalOperatorId = operatorId;
-    const operatorExists = await this.prisma.usuario.findUnique({
-      where: { id: operatorId },
-    });
-    if (!operatorExists) {
-      const firstUser = await this.prisma.usuario.findFirst();
-      if (firstUser) {
-        finalOperatorId = firstUser.id;
-      } else {
-        throw new BadRequestException(
-          'No hay ningún usuario registrado para registrar auditoría de la importación',
-        );
+    const validFields = [
+      'waybill',
+      'recipientCustomerType',
+      'recipientDocument',
+      'recipientName',
+      'recipientPhone',
+      'recipientEmail',
+      'rawAddress',
+      'formattedAddress',
+      'latitude',
+      'longitude',
+      'originBranchId',
+      'customerId',
+      'warehouseContact',
+    ];
+
+    for (const key of validFields) {
+      if (rest[key] !== undefined && rest[key] !== null) {
+        updateData[key] = rest[key];
       }
     }
 
-    const errors: Array<{ row: number; error: string }> = [];
-    const seenCodes = new Set<string>();
-    const ordersToCreate: any[] = [];
-
-    // Cargar clientes existentes en memoria para validar más rápido
-    const clients = await this.prisma.cliente.findMany();
-    const clientIds = new Set(clients.map((c) => c.id));
-
-    // Cargar códigos existentes en DB para validar
-    const existingOrders = await this.prisma.pedido.findMany({
-      select: { codigo: true },
-    });
-    const existingCodesInDb = new Set(existingOrders.map((o) => o.codigo));
-
-    for (let i = 0; i < rawRows.length; i++) {
-      const rowNum = i + 2; // Fila física Excel (asumiendo cabecera en fila 1)
-      const row = rawRows[i];
-
-      // 1. Validar campos requeridos centralizados
-      const missingFields: string[] = [];
-      for (const field of REQUIRED_ORDER_FIELDS) {
-        // En Excel la direccionOriginal a veces la llaman "direccion"
-        const value =
-          field === 'direccionOriginal'
-            ? row.direccionOriginal || row.direccion
-            : row[field];
-        if (
-          value === undefined ||
-          value === null ||
-          String(value).trim() === ''
-        ) {
-          missingFields.push(field);
-        }
+    if (dto.code !== undefined && dto.code !== null) {
+      const cleanCode = dto.code.trim();
+      if (!cleanCode) {
+        throw new BadRequestException('El Nº de pedido es obligatorio');
       }
-
-      if (missingFields.length > 0) {
-        errors.push({
-          row: rowNum,
-          error: `Faltan campos obligatorios: ${missingFields.join(', ')}`,
-        });
-        continue;
-      }
-
-      const codigo = String(row.codigo).trim();
-      const clientUuid = String(row.clienteId).trim();
-      const direccion = String(row.direccionOriginal || row.direccion).trim();
-      const documento = String(row.documentoDestinatario).trim();
-      const guia = row.guia ? String(row.guia).trim() : null;
-
-      // 2. Validar duplicados en el mismo archivo
-      if (seenCodes.has(codigo)) {
-        errors.push({
-          row: rowNum,
-          error: `El código de pedido "${codigo}" está duplicado dentro del archivo Excel`,
-        });
-        continue;
-      }
-      seenCodes.add(codigo);
-
-      // 3. Validar duplicados contra la DB
-      if (existingCodesInDb.has(codigo)) {
-        errors.push({
-          row: rowNum,
-          error: `El código de pedido "${codigo}" ya está registrado en el sistema`,
-        });
-        continue;
-      }
-
-      // 4. Validar existencia del cliente
-      if (!clientIds.has(clientUuid)) {
-        errors.push({
-          row: rowNum,
-          error: `El cliente con ID "${clientUuid}" no existe en el sistema`,
-        });
-        continue;
-      }
-
-      const latValue = row.latitud ? parseFloat(row.latitud) : undefined;
-      const lngValue = row.longitud ? parseFloat(row.longitud) : undefined;
-      const { lat, lng } = this.resolveGeocoding(latValue, lngValue);
-
-      ordersToCreate.push({
-        codigo,
-        guia,
-        documentoDestinatario: documento,
-        direccionOriginal: direccion,
-        latitud: lat,
-        longitud: lng,
-        geocodingStatus: GeocodingStatus.VALIDATED,
-        clienteId: clientUuid,
+      const existingWithCode = await this.prisma.order.findFirst({
+        where: { code: cleanCode, id: { not: id } },
       });
+      if (existingWithCode) {
+        throw new BadRequestException(`El Nº de pedido "${cleanCode}" ya se encuentra registrado`);
+      }
+      updateData.code = cleanCode;
     }
 
-    if (errors.length > 0) {
-      throw new BadRequestException({
-        code: 'ERR_VALIDATION_FAILED',
-        details: errors,
-      });
+    if (dto.rawAddress !== undefined && dto.rawAddress !== null) {
+      const cleanAddress = this.geocodingService.extractAddressFromUrl(dto.rawAddress);
+      const geo = await this.geocodingService.resolveGeocodingFromUrl(cleanAddress, dto.latitude, dto.longitude);
+      let finalFormatted = dto.formattedAddress;
+      if (!finalFormatted || finalFormatted.startsWith('http')) {
+        finalFormatted = cleanAddress && !cleanAddress.startsWith('http') ? cleanAddress : undefined;
+      }
+      updateData.rawAddress = dto.rawAddress;
+      updateData.formattedAddress = finalFormatted;
+      updateData.latitude = geo.lat;
+      updateData.longitude = geo.lng;
+      updateData.geocodingStatus = geo.status;
     }
 
-    // 5. Inserción atómica en base de datos
-    return this.prisma.$transaction(async (tx) => {
-      const createdOrders = [];
-      for (const orderData of ordersToCreate) {
-        const order = await tx.pedido.create({
-          data: orderData,
+    if (dto.recipientCustomerType === 'COMPANY') {
+      const cleanRuc = (companyRuc || dto.recipientDocument || '').trim();
+      const cleanName = (companyName || '').trim();
+
+      if (cleanRuc) {
+        const resolvedCustomerId = await this.clientResolverService.resolveOrCreateClient({
+          recipientCustomerType: RecipientCustomerType.COMPANY,
+          recipientDocument: cleanRuc,
+          companyName: cleanName,
+          companyRuc: cleanRuc,
         });
 
-        await tx.orderTimeline.create({
+        updateData.customerId = resolvedCustomerId;
+        updateData.recipientDocument = cleanRuc;
+      }
+    }
+
+    return updateData;
+  }
+
+  private async syncOrderDriver(orderId: string, driverId?: string) {
+    if (driverId === undefined) return;
+
+    const targetDriverId = driverId?.trim();
+    const activeAssignment = await this.prisma.routeAssignment.findFirst({
+      where: { orderId },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    if (targetDriverId) {
+      if (!activeAssignment) {
+        const count = await this.prisma.routeAssignment.count({
+          where: { driverId: targetDriverId },
+        });
+        await this.prisma.routeAssignment.create({
           data: {
-            pedidoId: order.id,
-            estadoNuevo: EstadoPedido.PENDING,
-            userId: finalOperatorId,
+            orderId,
+            driverId: targetDriverId,
+            date: new Date(),
+            sequenceIndex: count,
+            status: AssignmentStatus.PENDING,
           },
         });
-
-        createdOrders.push(order);
+        this.trackingGateway.notifyOrderAssigned(targetDriverId, orderId);
+      } else if (activeAssignment.driverId !== targetDriverId) {
+        await this.prisma.routeAssignment.update({
+          where: { id: activeAssignment.id },
+          data: { driverId: targetDriverId },
+        });
+        this.trackingGateway.notifyOrderAssigned(targetDriverId, orderId);
       }
-      return createdOrders;
-    });
+    } else if (activeAssignment) {
+      await this.prisma.routeAssignment.delete({
+        where: { id: activeAssignment.id },
+      });
+    }
   }
 
   async update(id: string, dto: UpdateOrderDto) {
-    const order = await this.prisma.pedido.findUnique({
-      where: { id },
-    });
-    if (!order) {
+    const existing = await this.prisma.order.findUnique({ where: { id } });
+    if (!existing) {
       throw new NotFoundException('Pedido no encontrado');
     }
 
-    if (dto.clienteId) {
-      const client = await this.prisma.cliente.findUnique({
-        where: { id: dto.clienteId },
+    const updateData = await this.buildOrderUpdateData(id, dto);
+    await this.syncOrderDriver(id, dto.driverId);
+
+    if (Object.keys(updateData).length > 0) {
+      await this.prisma.order.update({
+        where: { id },
+        data: updateData,
       });
-      if (!client) {
-        throw new BadRequestException('El cliente especificado no existe');
-      }
     }
 
-    if (dto.driverId) {
-      const driver = await this.prisma.driverProfile.findUnique({
-        where: { id: dto.driverId },
-      });
-      if (!driver) {
-        throw new BadRequestException('El chofer especificado no existe');
-      }
-    }
-
-    const updateData: any = { ...dto };
-
-    // Si actualiza dirección y no manda lat/long, resolver geocoding
-    if (
-      dto.direccionOriginal &&
-      dto.latitud === undefined &&
-      dto.longitud === undefined
-    ) {
-      const { lat, lng } = this.resolveGeocoding(undefined, undefined);
-      updateData.latitud = lat;
-      updateData.longitud = lng;
-    }
-
-    return this.prisma.pedido.update({
-      where: { id },
-      data: updateData,
-    });
+    return this.findOne(id);
   }
 
-  async addEvidence(pedidoId: string, urlImagen: string) {
-    const order = await this.prisma.pedido.findUnique({
-      where: { id: pedidoId },
+  async updateStatus(routeAssignmentId: string, dto: UpdateOrderStatusDto) {
+    const existing = await this.prisma.routeAssignment.findUnique({
+      where: { id: routeAssignmentId },
     });
-    if (!order) {
-      throw new NotFoundException('Pedido no encontrado');
+    if (!existing) {
+      throw new NotFoundException('Asignación de ruta no encontrada');
     }
+
+    if (dto.status === AssignmentStatus.IN_TRANSIT) {
+      const activeAssignment = await this.prisma.routeAssignment.findFirst({
+        where: {
+          driverId: existing.driverId,
+          status: AssignmentStatus.IN_TRANSIT,
+        },
+      });
+
+      if (activeAssignment && activeAssignment.id !== routeAssignmentId) {
+        throw new BadRequestException('El chofer ya tiene un recorrido en tránsito activo');
+      }
+    }
+
+    const updateData: any = { status: dto.status };
+    if (dto.reasonText !== undefined) {
+      updateData.reasonText = dto.reasonText;
+    }
+
+    if (dto.status === AssignmentStatus.IN_TRANSIT && dto.latitude && dto.longitude) {
+      updateData.originLatitude = dto.latitude;
+      updateData.originLongitude = dto.longitude;
+
+      try {
+        const addressText = await this.geocodingService.reverseGeocodeCoords(dto.latitude, dto.longitude);
+        updateData.originAddress = addressText || null;
+      } catch (e) {
+        updateData.originAddress = null;
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const assignment = await tx.routeAssignment.update({
+        where: { id: routeAssignmentId },
+        data: updateData,
+      });
+
+      await tx.orderEvent.create({
+        data: {
+          routeAssignmentId,
+          type: dto.status === AssignmentStatus.IN_TRANSIT ? 'TRANSIT_STARTED' : dto.status,
+          actor: dto.userId || 'system',
+          metadata: dto.reasonText ? { reasonText: dto.reasonText } : Prisma.JsonNull,
+        },
+      });
+
+      return assignment;
+    });
+
+    if (dto.status === AssignmentStatus.IN_TRANSIT) {
+      this.eventEmitter.emit('order.transit_started', updated);
+    }
+
+    return updated;
+  }
+
+  async addEvidence(routeAssignmentId: string, s3Url: string, signatureText?: string) {
+    const existing = await this.prisma.routeAssignment.findUnique({ where: { id: routeAssignmentId } });
+    if (!existing) {
+      throw new NotFoundException('Asignación de ruta no encontrada');
+    }
+
     return this.prisma.evidence.create({
       data: {
-        pedidoId,
-        s3Url: urlImagen,
+        routeAssignmentId,
+        s3Url,
+        signatureText: signatureText || null,
       },
     });
   }
 
-  private resolveGeocoding(latInput?: number, lngInput?: number) {
-    let lat = latInput;
-    let lng = lngInput;
-
-    if (lat === undefined || lng === undefined || isNaN(lat) || isNaN(lng)) {
-      // Centro de Lima: -12.046374, -77.042793
-      // Desplazamiento aleatorio controlado entre -0.05 y +0.05
-      const offsetLat = (Math.random() - 0.5) * 0.1;
-      const offsetLng = (Math.random() - 0.5) * 0.1;
-      lat = -12.046374 + offsetLat;
-      lng = -77.042793 + offsetLng;
+  async reorderAssignments(userId: string, dto: ReorderAssignmentsDto) {
+    const driverProfile = await this.prisma.driverProfile.findUnique({
+      where: { userId },
+    });
+    if (!driverProfile) {
+      throw new ForbiddenException('El usuario no posee un perfil de conductor');
     }
 
-    return { lat, lng };
+    const assignments = await this.prisma.routeAssignment.findMany({
+      where: {
+        id: { in: dto.routeAssignmentIds },
+        driverId: driverProfile.id,
+      },
+    });
+
+    const hasInvalid = assignments.some(
+      (a) => a.status === AssignmentStatus.DELIVERED || a.status === AssignmentStatus.OBSERVED,
+    );
+
+    if (hasInvalid || assignments.length !== dto.routeAssignmentIds.length) {
+      throw new BadRequestException(
+        'Solo se pueden reordenar asignaciones pendientes o en tránsito pertenecientes al chofer',
+      );
+    }
+
+    return this.prisma.$transaction(
+      dto.routeAssignmentIds.map((id, index) =>
+        this.prisma.routeAssignment.update({
+          where: { id },
+          data: { sequenceIndex: index },
+        }),
+      ),
+    );
+  }
+
+  async reassignAssignment(
+    previousAssignmentId: string,
+    dto: { driverId: string; vehicleId?: string; date: string },
+    userId: string,
+  ) {
+    const prev = await this.prisma.routeAssignment.findUnique({
+      where: { id: previousAssignmentId },
+    });
+    if (!prev) {
+      throw new NotFoundException('Asignación previa no encontrada');
+    }
+
+    if (prev.status !== 'OBSERVED') {
+      throw new BadRequestException('Solo se pueden reasignar asignaciones en estado OBSERVED');
+    }
+
+    const targetDate = new Date(dto.date);
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+
+    const maxSeq = await this.prisma.routeAssignment.aggregate({
+      where: {
+        driverId: dto.driverId,
+        date: { gte: startOfDay, lte: endOfDay },
+      },
+      _max: { sequenceIndex: true },
+    });
+
+    const nextIndex = (maxSeq._max.sequenceIndex ?? -1) + 1;
+
+    return this.prisma.$transaction(async (tx) => {
+      const newAssignment = await tx.routeAssignment.create({
+        data: {
+          orderId: prev.orderId,
+          driverId: dto.driverId,
+          vehicleId: dto.vehicleId || null,
+          date: startOfDay,
+          sequenceIndex: nextIndex,
+          status: 'PENDING',
+          previousAssignmentId: prev.id,
+        },
+      });
+
+      await tx.orderEvent.create({
+        data: {
+          routeAssignmentId: newAssignment.id,
+          type: 'REGISTERED',
+          actor: userId || 'system',
+          metadata: {
+            reason: 'REASSIGNED_FROM_OBSERVED',
+            previousAssignmentId: prev.id,
+          },
+        },
+      });
+
+      await tx.orderEvent.create({
+        data: {
+          routeAssignmentId: newAssignment.id,
+          type: 'REASSIGNED',
+          actor: userId || 'system',
+          metadata: {
+            fromDate: prev.date,
+            toDate: startOfDay,
+            fromDriverId: prev.driverId,
+            toDriverId: dto.driverId,
+            previousAssignmentId: prev.id,
+          },
+        },
+      });
+
+      return newAssignment;
+    });
   }
 }

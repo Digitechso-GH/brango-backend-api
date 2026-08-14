@@ -1,11 +1,10 @@
 export const TRACKING_ROOMS = {
-  DRIVERS: 'drivers',
-  OPERATORS: 'operators',
+  OPERATOR_LIVE: 'operator:live',
 } as const;
 
 export const TRACKING_EVENTS = {
-  LOCATION_UPDATE: 'location_update',
-  DRIVER_LOCATION: 'driver_location',
+  LOCATION_UPDATE: 'location:update',
+  DRIVER_LOCATION: 'driver:location',
 } as const;
 
 export const LOCATION_EVENTS = {

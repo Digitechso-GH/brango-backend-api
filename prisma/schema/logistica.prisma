@@ -1,4 +1,9 @@
-enum EstadoPedido {
+enum RecipientCustomerType {
+  COMPANY
+  INDIVIDUAL
+}
+
+enum AssignmentStatus {
   PENDING
   IN_TRANSIT
   DELIVERED
@@ -11,90 +16,120 @@ enum GeocodingStatus {
   FAILED
 }
 
-model Pedido {
-  id                    String          @id @default(uuid())
-  codigo                String          @unique // Ej: PED-1029
-  guia                  String? // Ej: 004521
-  documentoDestinatario String
-  estado                EstadoPedido    @default(PENDING)
+model Order {
+  id                    String                @id @default(uuid())
+  code                  String                @unique
+  waybill               String?
+  recipientCustomerType RecipientCustomerType @default(COMPANY)
+  recipientDocument     String
+  
+  recipientName    String?
+  recipientPhone   String?
+  recipientEmail   String?
+  warehouseContact String?
 
-  // Geocoding & Address
-  direccionOriginal String
-  latitud           Float?
-  longitud          Float?
-  geocodingStatus   GeocodingStatus @default(PENDING)
+  rawAddress       String
+  formattedAddress String?
+  latitude         Float?
+  longitude        Float?
+  geocodingStatus  GeocodingStatus    @default(PENDING)
 
-  // Relaciones
-  clienteId String
-  cliente   Cliente @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  originBranchId String?
+  originBranch   Branch?              @relation(fields: [originBranchId], references: [id], onDelete: SetNull)
 
-  driverId String?
-  chofer   DriverProfile? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  customerId String?
+  customer   Customer?                @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
-  // Flags Integraciones
-  whatsappInTransitSentAt DateTime?
-  whatsappDeliveredSentAt DateTime?
-  routeStartedAt          DateTime?
+  assignments       RouteAssignment[]
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
 
-  evidencias        Evidence[]
-  orderTimelines    OrderTimeline[]
-  locationSnapshots LocationSnapshot[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([estado])
-  @@index([driverId])
-  @@index([clienteId])
+  @@index([customerId])
+  @@index([originBranchId])
 }
 
-model OrderTimeline {
-  id       String @id @default(uuid())
-  pedidoId String
-  pedido   Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+model RouteAssignment {
+  id            String           @id @default(uuid())
+  orderId       String
+  order         Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driverId      String
+  driver        DriverProfile    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  vehicleId     String?
+  vehicle       Vehicle?         @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  date          DateTime
+  sequenceIndex Int
+  status        AssignmentStatus @default(PENDING)
+  reasonText    String?
 
-  estadoAnterior EstadoPedido?
-  estadoNuevo    EstadoPedido
+  previousAssignmentId String?
+  previousAssignment   RouteAssignment?  @relation("AssignmentHistory", fields: [previousAssignmentId], references: [id])
+  nextAssignments      RouteAssignment[] @relation("AssignmentHistory")
 
-  userId  String
-  usuario Usuario @relation(fields: [userId], references: [id], onDelete: Restrict)
+  originLatitude  Float?
+  originLongitude Float?
+  originAddress   String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  events            OrderEvent[]
+  evidences         Evidence[]
+  locationSnapshots LocationSnapshot[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
-  @@index([pedidoId])
-  @@index([userId])
+  @@index([orderId])
+  @@index([driverId])
+  @@index([vehicleId])
+  @@index([date])
+}
+
+model Vehicle {
+  id          String            @id @default(uuid())
+  plate       String            @unique
+  model       String?
+  brand       String?
+  assignments RouteAssignment[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model OrderEvent {
+  id                String          @id @default(uuid())
+  routeAssignmentId String
+  routeAssignment   RouteAssignment @relation(fields: [routeAssignmentId], references: [id], onDelete: Cascade)
+  type              String
+  actor             String
+  metadata          Json?
+  timestamp         DateTime        @default(now())
 }
 
 model LocationSnapshot {
-  id       String        @id @default(uuid())
-  driverId String
-  chofer   DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  id                String           @id @default(uuid())
+  driverId          String
+  driver            DriverProfile    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  routeAssignmentId String?
+  routeAssignment   RouteAssignment? @relation(fields: [routeAssignmentId], references: [id], onDelete: SetNull)
 
-  pedidoId String?
-  pedido   Pedido? @relation(fields: [pedidoId], references: [id], onDelete: SetNull)
-
-  latitud  Float
-  longitud Float
-  evento   String? // Ej: "START", "5_MIN_INTERVAL", "DELIVERED"
+  latitude  Float
+  longitude Float
+  event     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([driverId])
-  @@index([pedidoId])
+  @@index([routeAssignmentId])
 }
 
 model Evidence {
-  id       String @id @default(uuid())
-  pedidoId String
-  pedido   Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  id                String          @id @default(uuid())
+  routeAssignmentId String
+  routeAssignment   RouteAssignment @relation(fields: [routeAssignmentId], references: [id], onDelete: Cascade)
 
-  s3Url      String
-  fileSizeKb Int?
+  s3Url         String
+  fileSizeKb    Int?
+  signatureText String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([pedidoId])
+  @@index([routeAssignmentId])
 }
