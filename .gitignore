@@ -10,3 +10,13 @@ check-configs.js
 read-errors.js
 test-timezone.ts
 scripts/
+
+# AI & Agent artifacts
+.agents/
+.gemini/
+.system_generated/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+brain/
+scratch/
