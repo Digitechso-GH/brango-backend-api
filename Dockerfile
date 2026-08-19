@@ -1,11 +1,11 @@
-﻿FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 
 # 1. Dependencias
 FROM base AS deps
 # Prisma necesita openssl
 RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
-RUN corepack enable pnpm
+RUN npm install -g pnpm@9
 
 COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma
@@ -15,7 +15,7 @@ RUN pnpm i --frozen-lockfile
 # 2. Build
 FROM base AS builder
 WORKDIR /app
-RUN corepack enable pnpm
+RUN npm install -g pnpm@9
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
@@ -27,7 +27,7 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache openssl
-RUN corepack enable pnpm
+RUN npm install -g pnpm@9
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
