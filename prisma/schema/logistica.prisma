@@ -21,7 +21,7 @@ model Order {
   code                  String                @unique
   waybill               String?
   recipientCustomerType RecipientCustomerType @default(COMPANY)
-  recipientDocument     String
+  recipientDocument     String?
   
   recipientName    String?
   recipientPhone   String?
