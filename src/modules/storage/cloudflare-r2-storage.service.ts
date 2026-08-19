@@ -28,10 +28,11 @@ export class CloudflareR2StorageService implements StorageService {
     });
   }
 
-  async getUploadUrl(key: string): Promise<string> {
+  async getUploadUrl(key: string, contentType?: string): Promise<string> {
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
+      ...(contentType ? { ContentType: contentType } : {}),
     });
     // URL valid for 15 minutes
     return getSignedUrl(this.s3Client, command, { expiresIn: 900 });

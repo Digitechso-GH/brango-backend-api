@@ -1,5 +1,5 @@
 export interface StorageService {
-  getUploadUrl(key: string): Promise<string>;
+  getUploadUrl(key: string, contentType?: string): Promise<string>;
   getPublicUrl(key: string): string;
 }
 

@@ -18,4 +18,13 @@ export class NotificationsService {
       this.logger.error(`[Notifications] Error no controlado en WhatsApp Channel: ${err.message}`);
     });
   }
+
+  @OnEvent('order.completed')
+  async handleOrderCompleted(assignment: RouteAssignment) {
+    this.logger.log(`[Notifications] Capturado evento 'order.completed' para asignación ${assignment.id}`);
+    
+    this.whatsappChannel.sendCompletionNotification(assignment).catch(err => {
+      this.logger.error(`[Notifications] Error no controlado en WhatsApp Channel: ${err.message}`);
+    });
+  }
 }
