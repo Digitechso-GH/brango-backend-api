@@ -6,3 +6,7 @@ dist/
 pnpm-debug.log*
 .vscode/
 .idea/
+check-configs.js
+read-errors.js
+test-timezone.ts
+scripts/

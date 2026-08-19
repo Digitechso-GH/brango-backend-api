@@ -1,0 +1,79 @@
+﻿name: Deploy Production (Direct)
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: $((github.repository).ToLower())
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase Image Name
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+      - name: Deploy to Production VM
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          NEW_TAG: sha-${{ github.sha }}
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          envs: NEW_TAG
+          script: |
+            set -e
+            PROJECT_PATH="${{ secrets.PROD_PROJECT_PATH }}"
+            if [ -z "$PROJECT_PATH" ]; then
+              echo "ERROR: PROD_PROJECT_PATH secret is empty" >&2
+              exit 1
+            fi
+            cd "$PROJECT_PATH"
+
+            # 1. Save current tag for rollback
+            if [ -f .env ]; then
+              CURRENT_TAG=$(grep -E '^IMAGE_TAG=' .env | cut -d '=' -f 2 || true)
+              if [ -n "$CURRENT_TAG" ]; then
+                echo "$CURRENT_TAG" > current_tag.prev
+              fi
+            fi
+
+            # 2. Update .env with new tag
+            if [ -f .env ]; then
+              if grep -qE '^IMAGE_TAG=' .env; then
+                sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${NEW_TAG}/" .env
+              else
+                echo "IMAGE_TAG=${NEW_TAG}" >> .env
+              fi
+            else
+              echo "IMAGE_TAG=${NEW_TAG}" > .env
+            fi
+
+            # 3. Pull and restart
+            docker compose pull
+            docker compose up -d

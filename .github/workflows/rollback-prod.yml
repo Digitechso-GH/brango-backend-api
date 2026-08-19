@@ -1,0 +1,44 @@
+﻿name: Rollback Production (Manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Rollback to previous tag on production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            set -e
+            PROJECT_PATH="${{ secrets.PROD_PROJECT_PATH }}"
+            cd "$PROJECT_PATH"
+
+            if [ -f current_tag.prev ]; then
+              prev=$(cat current_tag.prev)
+            else
+              echo "No previous tag found to rollback to." >&2
+              exit 1
+            fi
+
+            if [ -f .env ]; then
+              if grep -qE '^IMAGE_TAG=' .env; then
+                sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${prev}/" .env
+              else
+                echo "IMAGE_TAG=${prev}" >> .env
+              fi
+            else
+              echo "IMAGE_TAG=${prev}" > .env
+            fi
+
+            # Pull and restart with previous tag
+            docker compose pull
+            docker compose up -d
+
+            echo "Rolled back to ${prev}."
