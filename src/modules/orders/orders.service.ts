@@ -30,7 +30,7 @@ const DEFAULT_ORDER_INCLUDE = {
   originBranch: true,
   customer: { include: { company: true } },
   assignments: {
-    orderBy: [{ date: 'desc' as const }, { createdAt: 'desc' as const }],
+    orderBy: { createdAt: 'desc' as const },
     take: 1,
     include: {
       driver: { include: { user: true } },
@@ -120,8 +120,8 @@ export class OrdersService {
 
       if (dto.driverId) {
         const targetDate = new Date();
-        const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
-        const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+        const startOfDay = dayjs(targetDate).tz(TIMEZONE).startOf('day').toDate();
+        const endOfDay = dayjs(targetDate).tz(TIMEZONE).endOf('day').toDate();
 
         const count = await tx.routeAssignment.count({
           where: {
@@ -200,52 +200,143 @@ export class OrdersService {
     return successCount;
   }
 
-  async findAll(driverId?: string, todayOnly?: boolean | string, dateStr?: string) {
+  async findAll(search?: string, page: number = 1, limit: number = 20, driverId?: string) {
     const whereCondition: any = {};
 
-    if (todayOnly === true || todayOnly === 'true' || dateStr) {
-      const targetDate = dateStr ? new Date(dateStr) : new Date();
-      const startOfDay = dayjs(targetDate).tz(TIMEZONE).startOf('day').toDate();
-      const endOfDay = dayjs(targetDate).tz(TIMEZONE).endOf('day').toDate();
-
-      if (driverId) {
-        // 2da Capa de Protección: Auto-cierre de asignaciones colgadas de días anteriores
-        await this.executeAutoClosure({
-          driverId,
-          date: { lt: startOfDay },
-          status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
-        });
-
-        whereCondition.assignments = {
-          some: { driverId },
-        };
-        whereCondition.OR = [
-          { createdAt: { gte: startOfDay, lte: endOfDay } },
-          { assignments: { some: { driverId, status: { in: ['PENDING', 'IN_TRANSIT'] } } } },
-        ];
-      } else {
-        whereCondition.createdAt = {
-          gte: startOfDay,
-          lte: endOfDay,
-        };
-      }
-    } else if (driverId) {
+    if (driverId) {
       whereCondition.assignments = {
         some: { driverId },
       };
     }
 
-    return this.prisma.order.findMany({
+    if (search && search.trim() !== '') {
+      const searchFilter = { contains: search, mode: 'insensitive' as const };
+      whereCondition.OR = [
+        { code: searchFilter },
+        { waybill: searchFilter },
+        { recipientName: searchFilter },
+        { customer: { name: searchFilter } },
+      ];
+    }
+
+    const total = await this.prisma.order.count({ where: whereCondition });
+    const data = await this.prisma.order.findMany({
+      where: whereCondition,
+      include: DEFAULT_ORDER_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async findToday(driverId?: string) {
+    const targetDate = new Date();
+    const startOfDay = dayjs(targetDate).tz(TIMEZONE).startOf('day').toDate();
+    const endOfDay = dayjs(targetDate).tz(TIMEZONE).endOf('day').toDate();
+
+    // Auto-cierre de asignaciones colgadas de días anteriores para el chofer (si se especifica) o global
+    await this.executeAutoClosure({
+      ...(driverId ? { driverId } : {}),
+      date: { lt: startOfDay },
+      status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
+    });
+
+    let whereCondition: any;
+
+    if (driverId) {
+      whereCondition = {
+        assignments: {
+          some: {
+            driverId,
+            OR: [
+              { date: { gte: startOfDay, lte: endOfDay } },
+              { status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] } },
+            ],
+          },
+        },
+      };
+    } else {
+      whereCondition = {
+        OR: [
+          { createdAt: { gte: startOfDay, lte: endOfDay } },
+          {
+            assignments: {
+              some: {
+                date: { gte: startOfDay, lte: endOfDay },
+              },
+            },
+          },
+        ],
+      };
+    }
+
+    const data = await this.prisma.order.findMany({
       where: whereCondition,
       include: DEFAULT_ORDER_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
+
+    return {
+      data,
+      meta: {
+        total: data.length,
+        page: 1,
+        limit: data.length,
+        totalPages: 1,
+      },
+    };
+  }
+
+  async getConfig() {
+    const configs = await this.prisma.systemConfig.findMany();
+    const configMap: Record<string, string> = {};
+    for (const c of configs) {
+      configMap[c.key] = c.value;
+    }
+    return configMap;
+  }
+
+  async updateConfig(config: Record<string, string>) {
+    const updates = Object.entries(config).map(([key, value]) => {
+      return this.prisma.systemConfig.upsert({
+        where: { key },
+        update: { value },
+        create: { key, value },
+      });
+    });
+    await this.prisma.$transaction(updates);
+    const updatedConfig = await this.getConfig();
+    this.trackingGateway.notifyConfigUpdated(updatedConfig);
+    return updatedConfig;
   }
 
   async findOne(id: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: DEFAULT_ORDER_INCLUDE,
+      include: {
+        originBranch: true,
+        customer: { include: { company: true } },
+        assignments: {
+          orderBy: [{ createdAt: 'asc' }],
+          include: {
+            driver: { include: { user: true } },
+            events: {
+              orderBy: { timestamp: 'asc' }
+            },
+            evidences: true,
+          },
+        },
+      },
     });
     if (!order) {
       throw new NotFoundException('Pedido no encontrado');
@@ -339,7 +430,7 @@ export class OrdersService {
     const targetDriverId = driverId?.trim();
     const activeAssignment = await this.prisma.routeAssignment.findFirst({
       where: { orderId },
-      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      orderBy: { createdAt: 'desc' },
     });
 
     if (targetDriverId) {
@@ -448,6 +539,8 @@ export class OrdersService {
 
     if (dto.status === AssignmentStatus.IN_TRANSIT) {
       this.eventEmitter.emit('order.transit_started', updated);
+    } else if (dto.status === AssignmentStatus.DELIVERED || dto.status === AssignmentStatus.OBSERVED) {
+      this.eventEmitter.emit('order.completed', updated);
     }
 
     return updated;
@@ -519,9 +612,10 @@ export class OrdersService {
       throw new BadRequestException('Solo se pueden reasignar asignaciones en estado OBSERVED');
     }
 
-    const targetDate = new Date(dto.date);
-    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+    // Usamos dayjs.tz para que startOfDay coincida exactamente con la medianoche de Lima (05:00 UTC)
+    const dateStr = dto.date.split('T')[0];
+    const startOfDay = dayjs.tz(dateStr, TIMEZONE).startOf('day').toDate();
+    const endOfDay = dayjs.tz(dateStr, TIMEZONE).endOf('day').toDate();
 
     const maxSeq = await this.prisma.routeAssignment.aggregate({
       where: {
@@ -538,7 +632,7 @@ export class OrdersService {
         data: {
           orderId: prev.orderId,
           driverId: dto.driverId,
-          vehicleId: dto.vehicleId || null,
+          vehicleId: dto.vehicleId || null, // Categoría B: vehicleId es opcional; undefined se normaliza a null para Prisma
           date: startOfDay,
           sequenceIndex: nextIndex,
           status: 'PENDING',
@@ -572,6 +666,8 @@ export class OrdersService {
           },
         },
       });
+
+
 
       return newAssignment;
     });

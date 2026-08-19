@@ -39,8 +39,8 @@ export class CreateOrderDto {
   customerId?: string;
 
   @IsString()
-  @IsNotEmpty({ message: 'recipientDocument is required' })
-  recipientDocument: string;
+  @IsOptional()
+  recipientDocument?: string;
 
   @IsString()
   @IsOptional()

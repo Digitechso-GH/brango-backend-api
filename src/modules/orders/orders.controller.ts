@@ -46,11 +46,28 @@ export class OrdersController {
   }
 
   @Post('presigned-url')
-  async getPresignedUrl(@Body('key') key?: string) {
+  async getPresignedUrl(
+    @Body('key') key?: string,
+    @Body('contentType') contentType?: string,
+  ) {
     const finalKey = key || `evidence-${Date.now()}.jpg`;
-    const uploadUrl = await this.storageService.getUploadUrl(finalKey);
+    const uploadUrl = await this.storageService.getUploadUrl(finalKey, contentType);
     const publicUrl = this.storageService.getPublicUrl(finalKey);
     return { uploadUrl, publicUrl, key: finalKey };
+  }
+
+  @Get('config')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR, ROLES.SYS_DRIVER)
+  async getConfig() {
+    return this.ordersService.getConfig();
+  }
+
+  @Put('config')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async updateConfig(@Body() config: Record<string, string>) {
+    return this.ordersService.updateConfig(config);
   }
 
   @Post('import')
@@ -80,13 +97,25 @@ export class OrdersController {
 
   @Get()
   async findAll(
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('driverId') driverId?: string,
-    @Query('todayOnly') todayOnly?: string,
-    @Query('date') date?: string,
   ) {
-    return this.ordersService.findAll(driverId, todayOnly, date);
+    const pageNumber = page ? parseInt(page, 10) : 1;
+    const limitNumber = limit ? parseInt(limit, 10) : 20;
+    return this.ordersService.findAll(search, pageNumber, limitNumber, driverId);
   }
 
+  @Get('today')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR, ROLES.SYS_DRIVER)
+  async findToday(@Request() req: any, @Query('driverId') driverId?: string) {
+    // Si es chofer, forzamos su propio ID. Si es Admin/Dispatcher y envían driverId, filtramos por él. Si no, devolvemos todos.
+    const isDriver = req.user.role === ROLES.SYS_DRIVER;
+    const targetDriverId = isDriver ? req.user.sub : driverId;
+    return this.ordersService.findToday(targetDriverId);
+  }
   @Get(':id')
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.ordersService.findOne(id);

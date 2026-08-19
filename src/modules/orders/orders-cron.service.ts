@@ -17,7 +17,7 @@ export class OrdersCronService {
 
   constructor(private readonly ordersService: OrdersService) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_10PM, { timeZone: TIMEZONE })
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT, { timeZone: TIMEZONE })
   async handleEodClosure() {
     this.logger.log('Starting End of Day (EOD) auto-closure of route assignments...');
 

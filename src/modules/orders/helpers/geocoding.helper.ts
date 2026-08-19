@@ -59,13 +59,31 @@ export async function resolveGeocodingFromUrl(
     }
   }
 
-  // Fallback de coordenadas en Lima
-  const offsetLat = (Math.random() - 0.5) * 0.05;
-  const offsetLng = (Math.random() - 0.5) * 0.05;
+  // 3. Si no hay coordenadas en el texto, usar Google Maps Geocoding API
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  if (apiKey && !urlOrText.includes('http')) {
+    try {
+      const searchQuery = targetText.toLowerCase().includes('lima') ? targetText : `${targetText}, Lima, Peru`;
+      const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${apiKey}`);
+      const data = await res.json();
+      if (data.status === "OK" && data.results && data.results.length > 0) {
+        const location = data.results[0].geometry.location;
+        return {
+          lat: location.lat,
+          lng: location.lng,
+          status: GeocodingStatus.VALIDATED,
+        };
+      }
+    } catch (e) {
+      console.error("Error en Google Geocoding API para texto:", e);
+    }
+  }
+
+  // 4. Si falla todo, retornar null explícito (Sin inventar coordenadas)
   return {
-    lat: -12.046374 + offsetLat,
-    lng: -77.042793 + offsetLng,
-    status: GeocodingStatus.VALIDATED,
+    lat: null,
+    lng: null,
+    status: GeocodingStatus.FAILED,
   };
 }
 
@@ -78,10 +96,7 @@ export function resolveGeocoding(latInput?: number, lngInput?: number) {
   let lng = lngInput;
 
   if (lat === undefined || lng === undefined || isNaN(lat) || isNaN(lng)) {
-    const offsetLat = (Math.random() - 0.5) * 0.1;
-    const offsetLng = (Math.random() - 0.5) * 0.1;
-    lat = -12.046374 + offsetLat;
-    lng = -77.042793 + offsetLng;
+    return { lat: null as any, lng: null as any };
   }
 
   return { lat, lng };
@@ -101,8 +116,6 @@ export async function reverseGeocodeCoords(lat: number, lng: number): Promise<st
     }
   }
 
-  if (lat > -12.04 && lng < -77.05) return "Av. El Olivar, San Martín de Porres, Lima";
-  if (lat < -12.08 && lng > -76.98) return "Av. Manuel Olguín, Santiago de Surco, Lima";
-  if (lat < -12.11) return "Av. José Larco, Miraflores, Lima";
-  return "Punto de Partida en Ruta, Lima";
+  // Si falla el API o no hay key, devolver un texto genérico o vacío en vez de inventar
+  return "Dirección no encontrada (Solo GPS)";
 }

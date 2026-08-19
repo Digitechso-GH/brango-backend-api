@@ -190,4 +190,10 @@ export class TrackingGateway
       });
     }
   }
+
+  notifyConfigUpdated(config: Record<string, string>) {
+    if (this.server) {
+      this.server.emit('config:updated', config);
+    }
+  }
 }

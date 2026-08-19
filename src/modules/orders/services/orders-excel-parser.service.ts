@@ -60,7 +60,8 @@ export class OrdersExcelParserService {
       const phone = String(row[4] || '').trim();
       const warehouseContact = String(row[6] || '').trim();
 
-      const targetAddress = address || link;
+      // El enlace de Google Maps es estrictamente obligatorio (Sin fallbacks)
+      const targetAddress = link;
 
       if (!code) {
         errors.push({ fila: rowNum, error: 'Falta el Nº de pedido' });
@@ -71,7 +72,7 @@ export class OrdersExcelParserService {
       }
 
       if (!targetAddress) {
-        errors.push({ fila: rowNum, error: 'Falta la dirección de destino o enlace de Maps' });
+        errors.push({ fila: rowNum, error: 'Es estrictamente obligatorio proveer el enlace de Google Maps en la columna LINK' });
       }
 
       if (!nameCol) {
