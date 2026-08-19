@@ -31,7 +31,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
-            type=sha,prefix=sha-
+            type=sha,prefix=sha-,format=full
             type=raw,value=latest,enable=true
 
       - name: Build and push Docker image
