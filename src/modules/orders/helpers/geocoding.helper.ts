@@ -119,3 +119,58 @@ export async function reverseGeocodeCoords(lat: number, lng: number): Promise<st
   // Si falla el API o no hay key, devolver un texto genérico o vacío en vez de inventar
   return "Dirección no encontrada (Solo GPS)";
 }
+
+export async function calculateRouteETA(originLat: number, originLng: number, destLat: number, destLng: number): Promise<string | null> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(`https://routes.googleapis.com/directions/v2:computeRoutes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': 'routes.duration',
+      },
+      body: JSON.stringify({
+        origin: {
+          location: {
+            latLng: {
+              latitude: originLat,
+              longitude: originLng
+            }
+          }
+        },
+        destination: {
+          location: {
+            latLng: {
+              latitude: destLat,
+              longitude: destLng
+            }
+          }
+        },
+        travelMode: 'DRIVE',
+        routingPreference: 'TRAFFIC_AWARE',
+        languageCode: 'es-PE'
+      })
+    });
+
+    const data = await res.json();
+    if (data.routes && data.routes.length > 0 && data.routes[0].duration) {
+      // duration comes as "1500s"
+      const seconds = parseInt(data.routes[0].duration.replace('s', ''));
+      if (isNaN(seconds)) return null;
+
+      const totalMinutes = Math.round(seconds / 60);
+      if (totalMinutes < 60) return `${totalMinutes} minutos`;
+      
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      return mins > 0 ? `${hours} hora(s) y ${mins} minutos` : `${hours} hora(s)`;
+    }
+    return null;
+  } catch (e) {
+    console.error("Error en Compute Routes API:", e);
+    return null;
+  }
+}

@@ -14,7 +14,10 @@ async function bootstrap() {
 
   // Inyección obligatoria de ConfigService
   const configService = app.get(ConfigService);
-  const port = configService.get<number>('PORT') ?? 3001;
+  const port = configService.get<number>('PORT');
+  if (!port) {
+    throw new Error('❌ Falta la variable de entorno PORT. Revisa tu .env');
+  }
 
   // Validación estricta global de entrada (DTOs)
   app.useGlobalPipes(

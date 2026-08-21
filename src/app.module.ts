@@ -19,6 +19,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: ['.env.development', '.env'],
     }),
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot(),

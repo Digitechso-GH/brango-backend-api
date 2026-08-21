@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AssignmentStatus } from '@prisma/client';
-
+import { calculateRouteETA } from '../../orders/helpers/geocoding.helper';
 const HEADER_IMAGE_POOL = [
   'https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png'
 ];
@@ -23,9 +23,9 @@ export class WhatsappChannel {
     const token = process.env.WHATSAPP_TOKEN;
     const phoneId = process.env.WHATSAPP_PHONE_ID;
     
-    // Leer número admin de la base de datos, fallback al .env
+    // Leer número admin de la base de datos (única fuente de verdad)
     const config = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_admin_phone' } });
-    let adminPhone = config?.value || process.env.WHATSAPP_ADMIN_PHONE;
+    let adminPhone = config?.value;
     
     // Formatear adminPhone (solo números y obligar código de país 51)
     if (adminPhone) {
@@ -71,9 +71,21 @@ export class WhatsappChannel {
           customerPhone = '51' + customerPhone;
         }
 
-        // Extraer logo dinámico de la BD, o usar fallback
         const logoConfig = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_logo_url' } });
         const finalImage = logoConfig?.value || HEADER_IMAGE_POOL[0];
+
+        let etaText = '30 a 60 minutos';
+        if (fullAssignment.originLatitude && fullAssignment.originLongitude && fullAssignment.order.latitude && fullAssignment.order.longitude) {
+          const dynamicEta = await calculateRouteETA(
+            fullAssignment.originLatitude,
+            fullAssignment.originLongitude,
+            fullAssignment.order.latitude,
+            fullAssignment.order.longitude
+          );
+          if (dynamicEta) {
+            etaText = dynamicEta;
+          }
+        }
 
         const clientComponents = [
           {
@@ -90,7 +102,7 @@ export class WhatsappChannel {
             parameters: [
               { type: 'text', parameter_name: 'store_name', text: 'BranGo' },
               { type: 'text', parameter_name: 'order_id', text: orderCode },
-              { type: 'text', parameter_name: 'eta', text: '30 a 60 minutos' }
+              { type: 'text', parameter_name: 'eta', text: etaText }
             ]
           }
         ];
@@ -130,9 +142,9 @@ export class WhatsappChannel {
     const token = process.env.WHATSAPP_TOKEN;
     const phoneId = process.env.WHATSAPP_PHONE_ID;
     
-    // Leer número admin de la base de datos, fallback al .env
+    // Leer número admin de la base de datos (única fuente de verdad)
     const config = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_admin_phone' } });
-    let adminPhone = config?.value || process.env.WHATSAPP_ADMIN_PHONE;
+    let adminPhone = config?.value;
 
     // Formatear adminPhone (solo números y obligar código de país 51)
     if (adminPhone) {
