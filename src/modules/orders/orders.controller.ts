@@ -15,6 +15,7 @@ import {
   UseGuards,
   Request,
   Inject,
+  Delete,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -122,11 +123,9 @@ export class OrdersController {
   }
 
   @Put(':id')
-  async update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: UpdateOrderDto,
-  ) {
-    return this.ordersService.update(id, dto);
+  async update(@Param('id') id: string, @Body() updateOrderDto: UpdateOrderDto) {
+    console.log('UpdateOrderDto received:', updateOrderDto);
+    return this.ordersService.update(id, updateOrderDto);
   }
 
   @Put(':id/status')
@@ -156,5 +155,12 @@ export class OrdersController {
   ) {
     const userId = req.user?.id;
     return this.ordersService.reassignAssignment(previousAssignmentId, dto, userId);
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN)
+  async remove(@Param('id', ParseUUIDPipe) id: string) {
+    return this.ordersService.remove(id);
   }
 }

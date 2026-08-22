@@ -205,7 +205,10 @@ export class OrdersService {
 
     if (driverId) {
       whereCondition.assignments = {
-        some: { driverId },
+        some: { 
+          driverId,
+          status: { not: AssignmentStatus.CANCELLED }
+        },
       };
     }
 
@@ -258,6 +261,7 @@ export class OrdersService {
         assignments: {
           some: {
             driverId,
+            status: { not: AssignmentStatus.CANCELLED },
             OR: [
               { date: { gte: startOfDay, lte: endOfDay } },
               { status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] } },
@@ -424,19 +428,19 @@ export class OrdersService {
     return updateData;
   }
 
-  private async syncOrderDriver(orderId: string, driverId?: string) {
-    if (driverId === undefined) return;
+  private async syncOrderDriver(orderId: string, driverId?: string, removeDriver?: boolean) {
+    if (driverId === undefined && !removeDriver) return;
 
-    const targetDriverId = driverId?.trim();
+    const targetDriverId = removeDriver ? null : (driverId ? driverId.trim() : null);
     const activeAssignment = await this.prisma.routeAssignment.findFirst({
-      where: { orderId },
+      where: { orderId, status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] } },
       orderBy: { createdAt: 'desc' },
     });
 
     if (targetDriverId) {
       if (!activeAssignment) {
         const count = await this.prisma.routeAssignment.count({
-          where: { driverId: targetDriverId },
+          where: { driverId: targetDriverId, status: { not: AssignmentStatus.CANCELLED } },
         });
         await this.prisma.routeAssignment.create({
           data: {
@@ -449,16 +453,35 @@ export class OrdersService {
         });
         this.trackingGateway.notifyOrderAssigned(targetDriverId, orderId);
       } else if (activeAssignment.driverId !== targetDriverId) {
-        await this.prisma.routeAssignment.update({
-          where: { id: activeAssignment.id },
+        const updateResult = await this.prisma.routeAssignment.updateMany({
+          where: { id: activeAssignment.id, status: AssignmentStatus.PENDING },
           data: { driverId: targetDriverId },
         });
+        if (updateResult.count === 0) {
+          throw new BadRequestException('No se puede modificar el chofer. Es posible que el chofer ya haya iniciado la ruta de este pedido.');
+        }
         this.trackingGateway.notifyOrderAssigned(targetDriverId, orderId);
       }
     } else if (activeAssignment) {
-      await this.prisma.routeAssignment.delete({
-        where: { id: activeAssignment.id },
+      const updateResult = await this.prisma.routeAssignment.updateMany({
+        where: { id: activeAssignment.id, status: AssignmentStatus.PENDING },
+        data: { status: AssignmentStatus.CANCELLED }
       });
+      const deleteResult = { count: updateResult.count }; // Para mantener compatibilidad con la siguiente línea
+      
+      if (updateResult.count > 0) {
+        await this.prisma.orderEvent.create({
+          data: {
+            routeAssignmentId: activeAssignment.id,
+            type: 'DRIVER_UNASSIGNED',
+            actor: 'system',
+            metadata: { note: 'Chofer removido (Sin Asignar)' }
+          }
+        });
+      }
+      if (deleteResult.count === 0) {
+        throw new BadRequestException('No se puede remover el chofer porque es posible que ya haya iniciado la ruta de este pedido.');
+      }
     }
   }
 
@@ -469,7 +492,7 @@ export class OrdersService {
     }
 
     const updateData = await this.buildOrderUpdateData(id, dto);
-    await this.syncOrderDriver(id, dto.driverId);
+    await this.syncOrderDriver(id, dto.driverId, dto.removeDriver);
 
     if (Object.keys(updateData).length > 0) {
       await this.prisma.order.update({
@@ -621,6 +644,7 @@ export class OrdersService {
       where: {
         driverId: dto.driverId,
         date: { gte: startOfDay, lte: endOfDay },
+        status: { not: 'CANCELLED' },
       },
       _max: { sequenceIndex: true },
     });
@@ -669,7 +693,29 @@ export class OrdersService {
 
 
 
+
       return newAssignment;
     });
+  }
+
+  async remove(id: string) {
+    // Atomic delete: Only delete if the order has NO assignments (no driver ever assigned, inherently PENDING)
+    // This prevents race conditions where a driver is assigned exactly while deleting.
+    const result = await this.prisma.order.deleteMany({
+      where: {
+        id,
+        assignments: {
+          none: {},
+        },
+      },
+    });
+
+    if (result.count === 0) {
+      throw new BadRequestException(
+        'No se puede eliminar este pedido porque ya tiene un chofer asignado o no se encuentra en estado Pendiente.',
+      );
+    }
+
+    return { success: true };
   }
 }

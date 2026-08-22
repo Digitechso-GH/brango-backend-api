@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, IsUUID, IsIn } from 'class-validator';
+import { IsNumber, IsOptional, IsString, IsUUID, IsIn, IsBoolean } from 'class-validator';
 
 export class UpdateOrderDto {
   @IsString()
@@ -66,6 +66,10 @@ export class UpdateOrderDto {
   @IsUUID('all', { message: 'driverId must be a valid UUID' })
   @IsOptional()
   driverId?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  removeDriver?: boolean;
 
   @IsString()
   @IsOptional()

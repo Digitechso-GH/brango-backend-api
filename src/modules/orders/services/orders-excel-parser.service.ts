@@ -54,11 +54,12 @@ export class OrdersExcelParserService {
       }
 
       const code = String(row[0] || '').trim();
-      const nameCol = String(row[1] || '').trim();
-      const address = String(row[2] || '').trim();
-      const link = String(row[3] || '').trim();
-      const phone = String(row[4] || '').trim();
-      const warehouseContact = String(row[6] || '').trim();
+      const waybill = String(row[1] || '').trim();
+      const nameCol = String(row[2] || '').trim();
+      const address = String(row[3] || '').trim();
+      const link = String(row[4] || '').trim();
+      const phone = String(row[5] || '').trim();
+      const warehouseContact = String(row[7] || '').trim();
 
       // El enlace de Google Maps es estrictamente obligatorio (Sin fallbacks)
       const targetAddress = link;
@@ -91,7 +92,7 @@ export class OrdersExcelParserService {
       rawParsedRows.push({
         rowNumber: rowNum,
         code,
-        waybill: null,
+        waybill: waybill || null,
         recipientCustomerType: isEmpresa ? RecipientCustomerType.COMPANY : RecipientCustomerType.INDIVIDUAL,
         recipientDocument: '',
         recipientName: isEmpresa ? null : nameCol,
