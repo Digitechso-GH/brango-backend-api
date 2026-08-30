@@ -352,8 +352,14 @@ export class OrdersService {
           { createdAt: { gte: startOfDay, lte: endOfDay } },
           {
             assignments: {
+              none: { voidedAt: null },
+            },
+          },
+          {
+            assignments: {
               some: {
                 date: { gte: startOfDay, lte: endOfDay },
+                voidedAt: null,
               },
             },
           },
