@@ -236,9 +236,6 @@ export class OrdersService {
   }
 
   async executeAutoClosure(whereClause: Prisma.RouteAssignmentWhereInput): Promise<number> {
-    // 1. Cierre en cascada a la medianoche: Cerrar Rutas activas del día y sus pedidos asociados
-    await this.executeEodRouteCascadeClosure();
-
     const activeAssignments = await this.prisma.routeAssignment.findMany({
       where: whereClause,
     });
@@ -278,35 +275,47 @@ export class OrdersService {
   }
 
   async findAll(search?: string, page: number = 1, limit: number = 20, driverId?: string) {
-    const whereCondition: any = {};
+    const skip = (page - 1) * limit;
+
+    let whereCondition: Prisma.OrderWhereInput = {};
+
+    if (search && search.trim() !== '') {
+      const searchNormalized = search.trim();
+      whereCondition = {
+        OR: [
+          { code: { contains: searchNormalized, mode: 'insensitive' } },
+          { waybill: { contains: searchNormalized, mode: 'insensitive' } },
+          { recipientName: { contains: searchNormalized, mode: 'insensitive' } },
+          { recipientDocument: { contains: searchNormalized, mode: 'insensitive' } },
+          { customer: { name: { contains: searchNormalized, mode: 'insensitive' } } },
+        ],
+      };
+    }
 
     if (driverId) {
-      whereCondition.assignments = {
-        some: { 
-          driverId,
-          voidedAt: null
+      whereCondition = {
+        ...whereCondition,
+        assignments: {
+          some: {
+            driverId,
+            voidedAt: null,
+          },
         },
       };
     }
 
-    if (search && search.trim() !== '') {
-      const searchFilter = { contains: search, mode: 'insensitive' as const };
-      whereCondition.OR = [
-        { code: searchFilter },
-        { waybill: searchFilter },
-        { recipientName: searchFilter },
-        { customer: { name: searchFilter } },
-      ];
-    }
+    const [data, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where: whereCondition,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: DEFAULT_ORDER_INCLUDE,
+      }),
+      this.prisma.order.count({ where: whereCondition }),
+    ]);
 
-    const total = await this.prisma.order.count({ where: whereCondition });
-    const data = await this.prisma.order.findMany({
-      where: whereCondition,
-      include: DEFAULT_ORDER_INCLUDE,
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    const totalPages = Math.ceil(total / limit) || 1;
 
     return {
       data,
@@ -314,7 +323,7 @@ export class OrdersService {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages,
       },
     };
   }
@@ -323,13 +332,6 @@ export class OrdersService {
     const targetDate = new Date();
     const startOfDay = dayjs(targetDate).tz(TIMEZONE).startOf('day').toDate();
     const endOfDay = dayjs(targetDate).tz(TIMEZONE).endOf('day').toDate();
-
-    // Auto-cierre de asignaciones colgadas de días anteriores para el chofer (si se especifica) o global
-    await this.executeAutoClosure({
-      ...(driverId ? { driverId } : {}),
-      date: { lt: startOfDay },
-      status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
-    });
 
     let whereCondition: any;
 
