@@ -8,7 +8,6 @@ enum AssignmentStatus {
   IN_TRANSIT
   DELIVERED
   OBSERVED
-  CANCELLED
 }
 
 enum GeocodingStatus {
@@ -20,6 +19,7 @@ enum GeocodingStatus {
 model Order {
   id                    String                @id @default(uuid())
   code                  String                @unique
+  publicTrackingToken   String                @unique @default(uuid())
   waybill               String?
   recipientCustomerType RecipientCustomerType @default(COMPANY)
   recipientDocument     String?
@@ -49,6 +49,30 @@ model Order {
   @@index([originBranchId])
 }
 
+enum RouteStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Route {
+  id            String            @id @default(uuid())
+  name          String?
+  driverId      String
+  driver        DriverProfile     @relation(fields: [driverId], references: [id])
+  date          DateTime
+  sequenceIndex Int
+  status        RouteStatus       @default(PENDING)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  assignments   RouteAssignment[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  
+  @@index([driverId])
+  @@index([date])
+}
+
 model RouteAssignment {
   id            String           @id @default(uuid())
   orderId       String
@@ -61,6 +85,10 @@ model RouteAssignment {
   sequenceIndex Int
   status        AssignmentStatus @default(PENDING)
   reasonText    String?
+  voidedAt      DateTime?
+
+  routeId       String?
+  route         Route?           @relation(fields: [routeId], references: [id], onDelete: SetNull)
 
   previousAssignmentId String?
   previousAssignment   RouteAssignment?  @relation("AssignmentHistory", fields: [previousAssignmentId], references: [id])

@@ -26,6 +26,11 @@ export class DriversController {
     return this.driversService.findAll();
   }
 
+  @Get('available')
+  async findAvailable() {
+    return this.driversService.findAvailable();
+  }
+
   @Get(':id')
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.driversService.findOne(id);

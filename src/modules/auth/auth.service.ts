@@ -43,8 +43,8 @@ export class AuthService {
     };
 
     const secret = this.configService.get<string>('JWT_SECRET', 'super_secret_key_change_me_in_production');
-    // Generar access token de 15 minutos y refresh token de 30 días
-    const token = this.jwtService.sign(payload, { secret, expiresIn: '15m' });
+    // Generar access token de 7 días y refresh token de 30 días
+    const token = this.jwtService.sign(payload, { secret, expiresIn: '7d' });
     const refreshToken = this.jwtService.sign({ sub: user.id }, { secret, expiresIn: '30d' });
 
     let driverId = undefined;

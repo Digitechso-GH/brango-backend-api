@@ -38,6 +38,9 @@ export class WhatsappChannel {
       return;
     }
 
+    const appUrl = process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || process.env.APP_URL || 'https://brango.syncrodg.com';
+    let trackingUrl = '';
+
     try {
       // 1. Obtener la orden completa para sacar datos y teléfono
       const fullAssignment = await this.prisma.routeAssignment.findUnique({
@@ -50,7 +53,10 @@ export class WhatsappChannel {
       const orderCode = fullAssignment.order.code || fullAssignment.order.id.slice(0, 8);
       const driverName = fullAssignment.driver?.user?.name || 'Nuestro chofer';
       const customerName = fullAssignment.order.recipientName || 'nuestro cliente';
+      const trackingToken = fullAssignment.order.publicTrackingToken || orderCode;
+      trackingUrl = `${appUrl}/seguimiento/${trackingToken}`;
 
+      // 2. Disparo al Administrador (Plantilla de Alerta)
       const adminComponents = [
         {
           type: 'body',
@@ -63,8 +69,7 @@ export class WhatsappChannel {
       ];
       await this.sendTemplateToMeta(token, phoneId, adminPhone, 'admin_order_alert', 'es_PE', adminComponents);
 
-
-      // 3. Disparo al Cliente (Plantilla 1)
+      // 3. Disparo al Cliente (Plantilla con Link de Seguimiento)
       if (fullAssignment.order.recipientPhone) {
         let customerPhone = fullAssignment.order.recipientPhone.replace(/\D/g, '');
         if (customerPhone.length === 9) {
@@ -104,34 +109,62 @@ export class WhatsappChannel {
               { type: 'text', parameter_name: 'order_id', text: orderCode },
               { type: 'text', parameter_name: 'eta', text: etaText }
             ]
+          },
+          {
+            type: 'button',
+            sub_type: 'url',
+            index: '0',
+            parameters: [
+              {
+                type: 'text',
+                text: trackingToken
+              }
+            ]
           }
         ];
-        await this.sendTemplateToMeta(token, phoneId, customerPhone, 'order_in_transit', 'es_PE', clientComponents);
+
+        // Intentar envío con botón de tracking; si la plantilla en Meta no tiene botón configurado, fallback al payload estándar
+        try {
+          await this.sendTemplateToMeta(token, phoneId, customerPhone, 'order_in_transit', 'es_PE', clientComponents);
+        } catch (btnErr: any) {
+          this.logger.warn(`[WhatsApp] Reintentando envío de order_in_transit sin componente de botón dinámico: ${btnErr.message}`);
+          await this.sendTemplateToMeta(token, phoneId, customerPhone, 'order_in_transit', 'es_PE', clientComponents.slice(0, 2));
+        }
       }
 
     } catch (error: any) {
-      this.logger.error(`[WhatsApp] Fallo de red/API real contra Meta para ${assignment.id}: ${error.message}`);
+      this.logger.error(`[WhatsApp] Fallo de envío a Meta para asignación ${assignment.id}: ${error.message}`);
       
-      // Registrar falla silenciosa real
+      // Registrar evento de falla explícito en la base de datos para auditoría y reintento manual
       await this.prisma.orderEvent.create({
         data: {
           routeAssignmentId: assignment.id,
           type: EVENT_TYPES.FAILED,
           actor: 'system',
-          metadata: { reason: error.message },
+          metadata: { 
+            channel: 'whatsapp',
+            template: 'order_in_transit',
+            reason: error.message,
+            trackingUrl: trackingUrl || undefined,
+            failedAt: new Date().toISOString(),
+          },
         },
       });
       return;
     }
 
-    this.logger.log(`[WhatsApp] Notificación IN_TRANSIT enviada exitosamente para ${assignment.id}`);
+    this.logger.log(`[WhatsApp] Notificación IN_TRANSIT enviada exitosamente para ${assignment.id}. Tracking URL: ${trackingUrl}`);
     
     await this.prisma.orderEvent.create({
       data: {
         routeAssignmentId: assignment.id,
         type: EVENT_TYPES.SENT,
         actor: 'system',
-        metadata: { channel: 'whatsapp', template: 'order_in_transit' },
+        metadata: { 
+          channel: 'whatsapp', 
+          template: 'order_in_transit',
+          trackingUrl,
+        },
       },
     });
   }

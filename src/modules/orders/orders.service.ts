@@ -161,7 +161,84 @@ export class OrdersService {
     });
   }
 
+  async executeEodRouteCascadeClosure(): Promise<number> {
+    const endOfDay = dayjs().tz(TIMEZONE).endOf('day').toDate();
+
+    // 1. Buscar todas las rutas activas (PENDING o IN_PROGRESS) cuya fecha sea igual o anterior a hoy
+    const activeRoutes = await this.prisma.route.findMany({
+      where: {
+        status: { in: ['PENDING', 'IN_PROGRESS'] },
+        date: { lte: endOfDay },
+      },
+      include: {
+        assignments: {
+          where: {
+            status: { in: ['PENDING', 'IN_TRANSIT'] },
+            voidedAt: null,
+          },
+        },
+      },
+    });
+
+    if (activeRoutes.length === 0) {
+      // Si no hay rutas activas, verificar asignaciones huérfanas sin ruta
+      return this.executeAutoClosure({
+        date: { lte: endOfDay },
+        status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
+      });
+    }
+
+    let closedRouteCount = 0;
+
+    for (const route of activeRoutes) {
+      try {
+        await this.prisma.$transaction(async (tx: any) => {
+          // A. Cerrar la Ruta en cascada
+          await tx.route.update({
+            where: { id: route.id },
+            data: {
+              status: 'COMPLETED',
+              completedAt: new Date(),
+            },
+          });
+
+          // B. Cerrar en cascada todas las asignaciones pendientes/en tránsito de esta ruta
+          const pendingAssignments = route.assignments;
+          for (const assignment of pendingAssignments) {
+            await tx.routeAssignment.update({
+              where: { id: assignment.id },
+              data: {
+                status: AssignmentStatus.OBSERVED,
+                reasonText: 'Cierre automático nocturno a la medianoche',
+              },
+            });
+
+            await tx.orderEvent.create({
+              data: {
+                routeAssignmentId: assignment.id,
+                type: 'OBSERVED',
+                actor: 'system',
+                metadata: {
+                  reasonText: 'Cierre automático nocturno a la medianoche',
+                  note: 'Cierre en cascada de la ruta y entregas al finalizar la jornada operativa',
+                },
+              },
+            });
+          }
+        });
+        closedRouteCount++;
+      } catch (err: any) {
+        this.logger.error(`Failed to cascade auto-close route ${route.id}: ${err.message}`);
+      }
+    }
+
+    return closedRouteCount;
+  }
+
   async executeAutoClosure(whereClause: Prisma.RouteAssignmentWhereInput): Promise<number> {
+    // 1. Cierre en cascada a la medianoche: Cerrar Rutas activas del día y sus pedidos asociados
+    await this.executeEodRouteCascadeClosure();
+
     const activeAssignments = await this.prisma.routeAssignment.findMany({
       where: whereClause,
     });
@@ -207,7 +284,7 @@ export class OrdersService {
       whereCondition.assignments = {
         some: { 
           driverId,
-          status: { not: AssignmentStatus.CANCELLED }
+          voidedAt: null
         },
       };
     }
@@ -261,7 +338,7 @@ export class OrdersService {
         assignments: {
           some: {
             driverId,
-            status: { not: AssignmentStatus.CANCELLED },
+            voidedAt: null,
             OR: [
               { date: { gte: startOfDay, lte: endOfDay } },
               { status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] } },
@@ -440,7 +517,7 @@ export class OrdersService {
     if (targetDriverId) {
       if (!activeAssignment) {
         const count = await this.prisma.routeAssignment.count({
-          where: { driverId: targetDriverId, status: { not: AssignmentStatus.CANCELLED } },
+          where: { driverId: targetDriverId, voidedAt: null },
         });
         await this.prisma.routeAssignment.create({
           data: {
@@ -465,7 +542,7 @@ export class OrdersService {
     } else if (activeAssignment) {
       const updateResult = await this.prisma.routeAssignment.updateMany({
         where: { id: activeAssignment.id, status: AssignmentStatus.PENDING },
-        data: { status: AssignmentStatus.CANCELLED }
+        data: { voidedAt: new Date() }
       });
       const deleteResult = { count: updateResult.count }; // Para mantener compatibilidad con la siguiente línea
       
@@ -644,12 +721,12 @@ export class OrdersService {
       where: {
         driverId: dto.driverId,
         date: { gte: startOfDay, lte: endOfDay },
-        status: { not: 'CANCELLED' },
+        voidedAt: null,
       },
       _max: { sequenceIndex: true },
     });
 
-    const nextIndex = (maxSeq._max.sequenceIndex ?? -1) + 1;
+    const nextIndex = (maxSeq._max?.sequenceIndex ?? -1) + 1;
 
     return this.prisma.$transaction(async (tx) => {
       const newAssignment = await tx.routeAssignment.create({
@@ -717,5 +794,99 @@ export class OrdersService {
     }
 
     return { success: true };
+  }
+
+  async getPublicTracking(token: string) {
+    const cleanToken = token?.trim();
+    if (!cleanToken) {
+      throw new NotFoundException('Token de seguimiento inválido');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: {
+        publicTrackingToken: cleanToken,
+      },
+      include: {
+        originBranch: true,
+        customer: { include: { company: true } },
+        assignments: {
+          where: { voidedAt: null },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            driver: {
+              include: {
+                user: {
+                  select: { name: true },
+                },
+              },
+            },
+            vehicle: true,
+            events: {
+              orderBy: { timestamp: 'asc' },
+              select: {
+                id: true,
+                type: true,
+                actor: true,
+                timestamp: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('No se encontró información para el código de seguimiento proporcionado');
+    }
+
+    const activeAssignment = order.assignments[0] || null;
+    const status = activeAssignment?.status || 'PENDING';
+
+    let driverInfo = null;
+    let driverLocation = null;
+
+    if (activeAssignment?.driver) {
+      driverInfo = {
+        name: activeAssignment.driver.user?.name || 'Chofer Asignado',
+        unit: activeAssignment.driver.unit || activeAssignment.vehicle?.plate || null,
+      };
+
+      // Si el pedido está en camino, exponer ubicación actual en tiempo real desde snapshots
+      if (status === 'IN_TRANSIT') {
+        const latestSnapshot = await this.prisma.locationSnapshot.findFirst({
+          where: { driverId: activeAssignment.driverId },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (latestSnapshot) {
+          driverLocation = {
+            latitude: latestSnapshot.latitude,
+            longitude: latestSnapshot.longitude,
+            updatedAt: latestSnapshot.createdAt,
+          };
+        }
+      }
+    }
+
+    return {
+      orderId: order.id,
+      code: order.code,
+      publicTrackingToken: order.publicTrackingToken,
+      waybill: order.waybill,
+      status: status,
+      recipientName: order.recipientName,
+      address: order.formattedAddress || order.rawAddress,
+      destinationLatitude: order.latitude ? Number(order.latitude) : null,
+      destinationLongitude: order.longitude ? Number(order.longitude) : null,
+      originAddress: activeAssignment?.originAddress || order.originBranch?.address || null,
+      originLatitude: activeAssignment?.originLatitude || order.originBranch?.latitude || null,
+      originLongitude: activeAssignment?.originLongitude || order.originBranch?.longitude || null,
+      driver: driverInfo,
+      driverLocation: driverLocation,
+      events: activeAssignment?.events || [],
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+    };
   }
 }

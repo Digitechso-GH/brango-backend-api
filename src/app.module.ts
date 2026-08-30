@@ -14,6 +14,7 @@ import { TrackingModule } from './modules/tracking/tracking.module';
 import { SedesModule } from './modules/sedes/sedes.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { RoutesModule } from './modules/routes/routes.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     SedesModule,
     StorageModule,
     NotificationsModule,
+    RoutesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

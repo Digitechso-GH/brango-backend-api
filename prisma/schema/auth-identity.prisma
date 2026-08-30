@@ -26,6 +26,7 @@ model DriverProfile {
   phone     String?
 
   assignments       RouteAssignment[]
+  routes            Route[]
   locationSnapshots LocationSnapshot[]
 
   createdAt DateTime @default(now())

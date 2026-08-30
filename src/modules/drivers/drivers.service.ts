@@ -110,6 +110,20 @@ export class DriversService {
     });
   }
 
+  async findAvailable() {
+    return this.prisma.driverProfile.findMany({
+      where: {
+        routes: {
+          none: {
+            status: 'IN_PROGRESS'
+          }
+        }
+      },
+      include: { user: true },
+      orderBy: { user: { name: 'asc' } },
+    });
+  }
+
   async findOne(id: string) {
     const profile = await this.prisma.driverProfile.findUnique({
       where: { id },

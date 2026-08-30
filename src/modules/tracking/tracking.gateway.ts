@@ -42,8 +42,23 @@ export class TrackingGateway
   async handleConnection(client: Socket) {
     try {
       const token = client.handshake.auth?.token;
+      const trackingToken = client.handshake.auth?.trackingToken || client.handshake.query?.trackingToken;
 
       if (!token) {
+        if (trackingToken) {
+          const order = await this.prisma.order.findUnique({
+            where: { publicTrackingToken: String(trackingToken).trim() },
+            select: { id: true },
+          });
+
+          if (order) {
+            await client.join(`order:${order.id}`);
+            client.data.publicOrderId = order.id;
+            this.logger.log(`Public tracking socket verified and joined order:${order.id} (ID: ${client.id})`);
+            return;
+          }
+          this.logger.warn(`Conexión pública rechazada: trackingToken inválido (${trackingToken})`);
+        }
         client.disconnect();
         return;
       }

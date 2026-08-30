@@ -9,10 +9,11 @@ import { OrdersImportService } from './services/orders-import.service';
 import { OrdersCronService } from './orders-cron.service';
 import { StorageModule } from '../storage/storage.module';
 import { AuthModule } from '../auth/auth.module';
+import { OrdersPublicController } from './orders.public.controller';
 
 @Module({
   imports: [TrackingModule, StorageModule, AuthModule],
-  controllers: [OrdersController],
+  controllers: [OrdersController, OrdersPublicController],
   providers: [
     OrdersService,
     GeocodingService,
