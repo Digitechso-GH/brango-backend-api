@@ -6,25 +6,22 @@ import {
   Logger,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
-import timezone from 'dayjs/plugin/timezone';
-
-dayjs.extend(utc);
-dayjs.extend(timezone);
-
-const TIMEZONE = 'America/Lima';
+import { getLimaDayRange, getLimaDayjs } from '../../core/utils/date.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { ReorderAssignmentsDto } from './dto/reorder-assignments.dto';
-import { RecipientCustomerType, GeocodingStatus, AssignmentStatus, Prisma } from '@prisma/client';
+import { GroupStopsDto } from './dto/group-stops.dto';
+import { UngroupStopDto } from './dto/ungroup-stop.dto';
+import { GroupEvidenceDto } from './dto/group-evidence.dto';
+import { RecipientCustomerType, GeocodingStatus, AssignmentStatus, RouteStatus, Prisma } from '@prisma/client';
 import { TrackingGateway } from '../tracking/tracking.gateway';
 import { GeocodingService } from './services/geocoding.service';
 import { OrdersClientResolverService } from './services/orders-client-resolver.service';
 import { OrdersExcelParserService } from './services/orders-excel-parser.service';
 import { OrdersImportService } from './services/orders-import.service';
+import { OrderStopsGroupingService } from './services/order-stops-grouping.service';
 
 const DEFAULT_ORDER_INCLUDE = {
   originBranch: true,
@@ -51,6 +48,7 @@ export class OrdersService {
     private readonly clientResolverService: OrdersClientResolverService,
     private readonly excelParserService: OrdersExcelParserService,
     private readonly importService: OrdersImportService,
+    private readonly orderStopsGroupingService: OrderStopsGroupingService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -120,8 +118,7 @@ export class OrdersService {
 
       if (dto.driverId) {
         const targetDate = new Date();
-        const startOfDay = dayjs(targetDate).tz(TIMEZONE).startOf('day').toDate();
-        const endOfDay = dayjs(targetDate).tz(TIMEZONE).endOf('day').toDate();
+        const { startOfDay, endOfDay } = getLimaDayRange(targetDate);
 
         const count = await tx.routeAssignment.count({
           where: {
@@ -162,7 +159,7 @@ export class OrdersService {
   }
 
   async executeEodRouteCascadeClosure(): Promise<number> {
-    const endOfDay = dayjs().tz(TIMEZONE).endOf('day').toDate();
+    const endOfDay = getLimaDayRange().endOfDay;
 
     // 1. Buscar todas las rutas activas (PENDING o IN_PROGRESS) cuya fecha sea igual o anterior a hoy
     const activeRoutes = await this.prisma.route.findMany({
@@ -330,8 +327,7 @@ export class OrdersService {
 
   async findToday(driverId?: string) {
     const targetDate = new Date();
-    const startOfDay = dayjs(targetDate).tz(TIMEZONE).startOf('day').toDate();
-    const endOfDay = dayjs(targetDate).tz(TIMEZONE).endOf('day').toDate();
+    const { startOfDay, endOfDay } = getLimaDayRange(targetDate);
 
     let whereCondition: any;
 
@@ -571,9 +567,22 @@ export class OrdersService {
   }
 
   async update(id: string, dto: UpdateOrderDto) {
-    const existing = await this.prisma.order.findUnique({ where: { id } });
+    const existing = await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        assignments: {
+          where: { voidedAt: null },
+        },
+      },
+    });
     if (!existing) {
       throw new NotFoundException('Pedido no encontrado');
+    }
+
+    if (existing.assignments && existing.assignments.length > 0) {
+      throw new BadRequestException(
+        'No se puede editar este pedido porque ya se encuentra asignado a una ruta o chofer.',
+      );
     }
 
     const updateData = await this.buildOrderUpdateData(id, dto);
@@ -597,7 +606,18 @@ export class OrdersService {
       throw new NotFoundException('Asignación de ruta no encontrada');
     }
 
+    if (existing.status === AssignmentStatus.DELIVERED || existing.status === AssignmentStatus.OBSERVED) {
+      throw new BadRequestException('No se puede modificar una asignación que ya ha sido finalizada');
+    }
+
     if (dto.status === AssignmentStatus.IN_TRANSIT) {
+      const { startOfDay: todayStart, endOfDay: todayEnd } = getLimaDayRange();
+      const assignmentDate = getLimaDayjs(existing.date);
+
+      if (assignmentDate.isBefore(todayStart) || assignmentDate.isAfter(todayEnd)) {
+        throw new BadRequestException('Solo puedes iniciar recorridos programados para el día de hoy.');
+      }
+
       const activeAssignment = await this.prisma.routeAssignment.findFirst({
         where: {
           driverId: existing.driverId,
@@ -606,7 +626,14 @@ export class OrdersService {
       });
 
       if (activeAssignment && activeAssignment.id !== routeAssignmentId) {
-        throw new BadRequestException('El chofer ya tiene un recorrido en tránsito activo');
+        const isSameStopGroup =
+          existing.stopGroupId &&
+          activeAssignment.stopGroupId &&
+          existing.stopGroupId === activeAssignment.stopGroupId;
+
+        if (!isSameStopGroup) {
+          throw new BadRequestException('El chofer ya tiene un recorrido en tránsito activo');
+        }
       }
     }
 
@@ -642,16 +669,87 @@ export class OrdersService {
         },
       });
 
-      return assignment;
+      // Si la parada está consolidada (stopGroupId) y pasa a IN_TRANSIT, poner a los hermanos pendientes en IN_TRANSIT automáticamente
+      const siblingUpdatedList: any[] = [];
+      if (existing.stopGroupId && dto.status === AssignmentStatus.IN_TRANSIT) {
+        const pendingSiblings = await tx.routeAssignment.findMany({
+          where: {
+            stopGroupId: existing.stopGroupId,
+            id: { not: routeAssignmentId },
+            status: AssignmentStatus.PENDING,
+          },
+        });
+
+        for (const sibling of pendingSiblings) {
+          const sibUpdated = await tx.routeAssignment.update({
+            where: { id: sibling.id },
+            data: updateData,
+          });
+
+          await tx.orderEvent.create({
+            data: {
+              routeAssignmentId: sibling.id,
+              type: 'TRANSIT_STARTED',
+              actor: dto.userId || 'system',
+              metadata: dto.reasonText ? { reasonText: dto.reasonText } : Prisma.JsonNull,
+            },
+          });
+
+          siblingUpdatedList.push(sibUpdated);
+        }
+      }
+
+      if (existing.routeId) {
+        if (dto.status === AssignmentStatus.IN_TRANSIT) {
+          await tx.route.update({
+            where: { id: existing.routeId },
+            data: {
+              status: 'IN_PROGRESS',
+              startedAt: new Date(),
+            },
+          });
+        } else if (dto.status === AssignmentStatus.DELIVERED || dto.status === AssignmentStatus.OBSERVED) {
+          const remainingActive = await tx.routeAssignment.count({
+            where: {
+              routeId: existing.routeId,
+              id: { not: routeAssignmentId },
+              status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
+              voidedAt: null,
+            },
+          });
+
+          if (remainingActive === 0) {
+            await tx.route.update({
+              where: { id: existing.routeId },
+              data: {
+                status: 'COMPLETED',
+                completedAt: new Date(),
+              },
+            });
+          } else {
+            await tx.route.update({
+              where: { id: existing.routeId },
+              data: {
+                status: 'IN_PROGRESS',
+              },
+            });
+          }
+        }
+      }
+
+      return { assignment, siblingUpdatedList };
     });
 
     if (dto.status === AssignmentStatus.IN_TRANSIT) {
-      this.eventEmitter.emit('order.transit_started', updated);
+      this.eventEmitter.emit('order.transit_started', updated.assignment);
+      for (const sib of updated.siblingUpdatedList) {
+        this.eventEmitter.emit('order.transit_started', sib);
+      }
     } else if (dto.status === AssignmentStatus.DELIVERED || dto.status === AssignmentStatus.OBSERVED) {
-      this.eventEmitter.emit('order.completed', updated);
+      this.eventEmitter.emit('order.completed', updated.assignment);
     }
 
-    return updated;
+    return updated.assignment;
   }
 
   async addEvidence(routeAssignmentId: string, s3Url: string, signatureText?: string) {
@@ -667,6 +765,22 @@ export class OrdersService {
         signatureText: signatureText || null,
       },
     });
+  }
+
+  async addGroupEvidence(dto: GroupEvidenceDto) {
+    return this.orderStopsGroupingService.addGroupEvidence(dto);
+  }
+
+  async getDuplicateStopSuggestions(dateStr?: string) {
+    return this.orderStopsGroupingService.getDuplicateStopSuggestions(dateStr);
+  }
+
+  async groupStops(dto: GroupStopsDto, userId?: string) {
+    return this.orderStopsGroupingService.groupStops(dto, userId);
+  }
+
+  async ungroupStop(dto: UngroupStopDto, userId?: string) {
+    return this.orderStopsGroupingService.ungroupStop(dto, userId);
   }
 
   async reorderAssignments(userId: string, dto: ReorderAssignmentsDto) {
@@ -694,14 +808,37 @@ export class OrdersService {
       );
     }
 
-    return this.prisma.$transaction(
-      dto.routeAssignmentIds.map((id, index) =>
+    let currentSeq = 0;
+    const groupSeqMap = new Map<string, number>();
+
+    const updates = [];
+    for (const id of dto.routeAssignmentIds) {
+      const assignment = assignments.find((a) => a.id === id);
+      if (!assignment) continue;
+
+      let seq: number;
+      if (assignment.stopGroupId) {
+        if (groupSeqMap.has(assignment.stopGroupId)) {
+          seq = groupSeqMap.get(assignment.stopGroupId)!;
+        } else {
+          seq = currentSeq++;
+          groupSeqMap.set(assignment.stopGroupId, seq);
+        }
+      } else {
+        seq = currentSeq++;
+      }
+
+      updates.push(
         this.prisma.routeAssignment.update({
           where: { id },
-          data: { sequenceIndex: index },
+          data: { sequenceIndex: seq },
         }),
-      ),
-    );
+      );
+    }
+
+    const result = await this.prisma.$transaction(updates);
+    this.trackingGateway.notifyStopsUpdated(driverProfile.id);
+    return result;
   }
 
   async reassignAssignment(
@@ -722,8 +859,7 @@ export class OrdersService {
 
     // Usamos dayjs.tz para que startOfDay coincida exactamente con la medianoche de Lima (05:00 UTC)
     const dateStr = dto.date.split('T')[0];
-    const startOfDay = dayjs.tz(dateStr, TIMEZONE).startOf('day').toDate();
-    const endOfDay = dayjs.tz(dateStr, TIMEZONE).endOf('day').toDate();
+    const { startOfDay, endOfDay } = getLimaDayRange(dateStr);
 
     const maxSeq = await this.prisma.routeAssignment.aggregate({
       where: {
@@ -778,6 +914,8 @@ export class OrdersService {
 
 
 
+
+      this.trackingGateway.notifyOrderAssigned(dto.driverId, newAssignment.orderId);
 
       return newAssignment;
     });

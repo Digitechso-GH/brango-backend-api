@@ -26,6 +26,10 @@ export class CreateRouteDto {
   @ValidateNested({ each: true })
   @Type(() => RouteAssignmentInput)
   assignments?: RouteAssignmentInput[];
+
+  @IsString()
+  @IsOptional()
+  overviewPolyline?: string;
 }
 
 export class GetRoutesQueryDto {

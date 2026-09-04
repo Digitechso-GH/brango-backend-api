@@ -11,6 +11,7 @@ async function main() {
   await prisma.evidence.deleteMany();
   await prisma.locationSnapshot.deleteMany();
   await prisma.routeAssignment.deleteMany();
+  await prisma.route.deleteMany();
   await prisma.order.deleteMany();
   await prisma.customer.deleteMany();
   await prisma.company.deleteMany();

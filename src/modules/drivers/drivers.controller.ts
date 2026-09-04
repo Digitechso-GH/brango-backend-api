@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   ParseUUIDPipe,
+  Query,
 } from '@nestjs/common';
 import { DriversService } from './drivers.service';
 import { CreateDriverDto } from './dto/create-driver.dto';
@@ -27,8 +28,8 @@ export class DriversController {
   }
 
   @Get('available')
-  async findAvailable() {
-    return this.driversService.findAvailable();
+  async findAvailable(@Query('date') date?: string) {
+    return this.driversService.findAvailable(date);
   }
 
   @Get(':id')

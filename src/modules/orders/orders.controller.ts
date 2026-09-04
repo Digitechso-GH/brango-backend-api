@@ -22,6 +22,9 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ReorderAssignmentsDto } from './dto/reorder-assignments.dto';
+import { GroupStopsDto } from './dto/group-stops.dto';
+import { UngroupStopDto } from './dto/ungroup-stop.dto';
+import { GroupEvidenceDto } from './dto/group-evidence.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -117,6 +120,36 @@ export class OrdersController {
     const targetDriverId = isDriver ? req.user.sub : driverId;
     return this.ordersService.findToday(targetDriverId);
   }
+  @Get('duplicates-suggestions')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async getDuplicateSuggestions(@Query('date') date?: string) {
+    return this.ordersService.getDuplicateStopSuggestions(date);
+  }
+
+  @Post('group-stops')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async groupStops(@Request() req: any, @Body() dto: GroupStopsDto) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.ordersService.groupStops(dto, userId);
+  }
+
+  @Post('ungroup-stop')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async ungroupStop(@Request() req: any, @Body() dto: UngroupStopDto) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.ordersService.ungroupStop(dto, userId);
+  }
+
+  @Post('group-evidence')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async addGroupEvidence(@Body() dto: GroupEvidenceDto) {
+    return this.ordersService.addGroupEvidence(dto);
+  }
+
   @Get(':id')
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.ordersService.findOne(id);

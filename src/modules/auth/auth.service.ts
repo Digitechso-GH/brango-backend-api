@@ -39,7 +39,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       name: user.name,
-      rol: user.role.code,
+      role: user.role.code,
     };
 
     const secret = this.configService.get<string>('JWT_SECRET', 'super_secret_key_change_me_in_production');
@@ -65,7 +65,7 @@ export class AuthService {
         id: user.id,
         name: user.name,
         email: user.email,
-        rol: user.role.code,
+        role: user.role.code,
         driverId,
         unit,
       },

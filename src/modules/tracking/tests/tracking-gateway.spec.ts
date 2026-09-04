@@ -58,7 +58,7 @@ describe('TrackingGateway Connection Handling', () => {
     // Payload simulado decodificado del JWT
     jwtService.verifyAsync.mockResolvedValue({
       sub: 'user-driver-123',
-      rol: ROLES.SYS_DRIVER,
+      role: ROLES.SYS_DRIVER,
       name: 'Chofer de Prueba',
     });
 

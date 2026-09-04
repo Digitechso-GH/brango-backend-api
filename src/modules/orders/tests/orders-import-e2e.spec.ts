@@ -6,6 +6,8 @@ import { GeocodingService } from '../services/geocoding.service';
 import { OrdersClientResolverService } from '../services/orders-client-resolver.service';
 import { OrdersExcelParserService } from '../services/orders-excel-parser.service';
 import { OrdersImportService } from '../services/orders-import.service';
+import { OrderStopsGroupingService } from '../services/order-stops-grouping.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 describe('OrdersService - importExcel E2E integration test', () => {
   let ordersService: OrdersService;
@@ -16,10 +18,15 @@ describe('OrdersService - importExcel E2E integration test', () => {
 
   beforeEach(async () => {
     prismaService = {
-      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user-1' }), findFirst: jest.fn().mockResolvedValue({ id: 'user-1' }) },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'op-123' }),
+        findFirst: jest.fn().mockResolvedValue({ id: 'op-123' }),
+      },
+      order: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+      },
       $transaction: jest.fn().mockImplementation((cb) => cb(prismaService)),
-      order: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'ord-1', ...data })) },
-      orderEvent: { create: jest.fn().mockResolvedValue({ id: 'evt-1' }) },
     };
 
     excelParserService = {
@@ -42,7 +49,9 @@ describe('OrdersService - importExcel E2E integration test', () => {
         { provide: OrdersExcelParserService, useValue: excelParserService },
         { provide: OrdersClientResolverService, useValue: clientResolverService },
         { provide: GeocodingService, useValue: {} },
+        { provide: OrderStopsGroupingService, useValue: {} },
         { provide: TrackingGateway, useValue: trackingGateway },
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
       ],
     }).compile();
 

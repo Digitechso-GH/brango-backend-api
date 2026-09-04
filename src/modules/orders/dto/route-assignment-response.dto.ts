@@ -36,6 +36,9 @@ export class RouteAssignmentResponseDto {
   reasonText: string | null;
 
   @Expose()
+  stopGroupId: string | null;
+
+  @Expose()
   previousAssignmentId: string | null;
 
   @Expose()

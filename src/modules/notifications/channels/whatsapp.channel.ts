@@ -193,16 +193,34 @@ export class WhatsappChannel {
     try {
       const fullAssignment = await this.prisma.routeAssignment.findUnique({
         where: { id: assignment.id },
-        include: { order: true, driver: { include: { user: true } } },
+        include: { order: true, driver: { include: { user: true } }, evidences: true },
       });
 
       if (!fullAssignment || !fullAssignment.order) return;
 
       const orderCode = fullAssignment.order.code || fullAssignment.order.id.slice(0, 8);
       const driverName = fullAssignment.driver?.user?.name || 'Nuestro chofer';
-      const statusStr = fullAssignment.status === AssignmentStatus.DELIVERED ? 'ENTREGADO' : 'OBSERVADO';
+      const statusStr = fullAssignment.status === 'DELIVERED' ? 'ENTREGADO' : 'OBSERVADO';
+
+      // Usar foto de evidencia si existe, si no, fallback al logo
+      let finalImage = 'https://brango.syncrodg.com/logo.png';
+      if (fullAssignment.evidences && fullAssignment.evidences.length > 0) {
+        finalImage = fullAssignment.evidences[fullAssignment.evidences.length - 1].s3Url;
+      } else {
+        const logoConfig = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_logo_url' } });
+        if (logoConfig?.value) finalImage = logoConfig.value;
+      }
 
       const components = [
+        {
+          type: 'header',
+          parameters: [
+            {
+              type: 'image',
+              image: { link: finalImage }
+            }
+          ]
+        },
         {
           type: 'body',
           parameters: [
@@ -212,7 +230,25 @@ export class WhatsappChannel {
           ]
         }
       ];
-      await this.sendTemplateToMeta(token, phoneId, adminPhone, 'admin_order_completed', 'es_PE', components);
+      try {
+        await this.sendTemplateToMeta(token, phoneId, adminPhone, 'admin_order_completed', 'es_PE', components);
+      } catch (err: any) {
+        if (err.message.includes('does not exist')) {
+          this.logger.warn(`[WhatsApp] Reintentando admin_order_completed con idioma 'es_LA'...`);
+          try {
+            await this.sendTemplateToMeta(token, phoneId, adminPhone, 'admin_order_completed', 'es_LA', components);
+          } catch (err2: any) {
+            if (err2.message.includes('does not exist')) {
+               this.logger.warn(`[WhatsApp] Reintentando admin_order_completed con idioma 'es'...`);
+               await this.sendTemplateToMeta(token, phoneId, adminPhone, 'admin_order_completed', 'es', components);
+            } else {
+               throw err2;
+            }
+          }
+        } else {
+          throw err;
+        }
+      }
 
     } catch (error: any) {
       this.logger.error(`[WhatsApp] Fallo de red/API real contra Meta (COMPLETED) para ${assignment.id}: ${error.message}`);

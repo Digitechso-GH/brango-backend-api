@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import { getLimaDayRange } from '../../core/utils/date.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDriverDto } from './dto/create-driver.dto';
 import { UpdateDriverDto } from './dto/update-driver.dto';
@@ -110,12 +111,20 @@ export class DriversService {
     });
   }
 
-  async findAvailable() {
+  async findAvailable(dateStr?: string) {
+    const { startOfDay, endOfDay } = getLimaDayRange(dateStr);
+
     return this.prisma.driverProfile.findMany({
       where: {
         routes: {
           none: {
-            status: 'IN_PROGRESS'
+            date: {
+              gte: startOfDay,
+              lte: endOfDay,
+            },
+            status: {
+              in: ['PENDING', 'IN_PROGRESS'],
+            },
           }
         }
       },

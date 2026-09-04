@@ -1,30 +1,32 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRouteDto, GetRoutesQueryDto } from './routes.dto';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
-import timezone from 'dayjs/plugin/timezone';
-
-dayjs.extend(utc);
-dayjs.extend(timezone);
-const TIMEZONE = 'America/Lima';
+import { RouteStatus, AssignmentStatus } from '@prisma/client';
+import { getLimaDayRange } from '../../core/utils/date.util';
+import { TrackingGateway } from '../tracking/tracking.gateway';
 
 @Injectable()
 export class RoutesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly trackingGateway: TrackingGateway,
+  ) {}
 
   async createRoute(dto: CreateRouteDto) {
-    const targetDate = dayjs.tz(dto.date, TIMEZONE).startOf('day').toDate();
-    const endOfDay = dayjs.tz(dto.date, TIMEZONE).endOf('day').toDate();
+    const { startOfDay: targetDate, endOfDay } = getLimaDayRange(dto.date);
     const assignments = dto.assignments || [];
 
     return this.prisma.$transaction(async (tx: any) => {
-      // 1. Validar que el chofer no tenga ya una ruta IN_PROGRESS
-      const inProgressRoute = await tx.route.findFirst({
-        where: { driverId: dto.driverId, status: 'IN_PROGRESS' },
+      // 1. Validar que el chofer no tenga ya una ruta activa (PENDING o IN_PROGRESS) en la misma fecha
+      const activeRouteSameDay = await tx.route.findFirst({
+        where: { 
+          driverId: dto.driverId, 
+          date: { gte: targetDate, lte: endOfDay },
+          status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] }
+        },
       });
-      if (inProgressRoute) {
-        throw new BadRequestException('El chofer ya tiene una ruta IN_PROGRESS. No se puede crear otra.');
+      if (activeRouteSameDay) {
+        throw new BadRequestException('El chofer ya tiene una ruta activa para este día. Debes esperar a que la finalice.');
       }
 
       // 2. Validar duplicidad de pedidos si se proporcionan asignaciones
@@ -61,6 +63,7 @@ export class RoutesService {
           date: targetDate,
           sequenceIndex: routeSequenceIndex,
           status: 'PENDING',
+          overviewPolyline: dto.overviewPolyline,
           assignments: assignments.length > 0
             ? {
                 create: assignments.map((assignment, index) => ({
@@ -89,6 +92,11 @@ export class RoutesService {
         },
       });
 
+      if (dto.driverId) {
+        // Emit socket event to the driver so their app instantly refetches
+        this.trackingGateway.notifyOrderAssigned(dto.driverId, newRoute.id);
+      }
+
       return newRoute;
     });
   }
@@ -107,8 +115,7 @@ export class RoutesService {
     }
 
     if (query.date) {
-      const startOfDay = dayjs.tz(query.date, TIMEZONE).startOf('day').toDate();
-      const endOfDay = dayjs.tz(query.date, TIMEZONE).endOf('day').toDate();
+      const { startOfDay, endOfDay } = getLimaDayRange(query.date);
       whereCondition.date = {
         gte: startOfDay,
         lte: endOfDay,
@@ -144,13 +151,14 @@ export class RoutesService {
       id: r.id,
       name: r.name,
       driverId: r.driverId,
-      driverName: r.driver?.user?.name || 'Chofer Desconocido',
+      driverName: r.driver?.user?.name || null,
       unit: r.driver?.unit || null,
       date: r.date,
       sequenceIndex: r.sequenceIndex,
       status: r.status,
       startedAt: r.startedAt,
       completedAt: r.completedAt,
+      overviewPolyline: r.overviewPolyline,
       ordersCount: r.assignments.length,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
@@ -242,7 +250,7 @@ export class RoutesService {
   }
 
   async getMobileRoutes(driverId: string) {
-    const today = dayjs().tz(TIMEZONE).startOf('day').toDate();
+    const today = getLimaDayRange().startOfDay;
 
     return this.prisma.route.findMany({
       where: {
@@ -253,7 +261,12 @@ export class RoutesService {
       include: {
         assignments: {
           include: {
-            order: true,
+            order: {
+              include: {
+                customer: true,
+              },
+            },
+            evidences: true,
           },
           orderBy: { sequenceIndex: 'asc' },
         },
@@ -264,22 +277,30 @@ export class RoutesService {
 
   async completeRoute(routeId: string) {
     return this.prisma.$transaction(async (tx: any) => {
-      const route = await tx.route.findUnique({ where: { id: routeId } });
+      const route = await tx.route.findUnique({ 
+        where: { id: routeId },
+        include: { assignments: { where: { voidedAt: null } } }
+      });
       if (!route) throw new BadRequestException('Ruta no encontrada');
+
+      const hasInTransit = route.assignments.some((a: any) => a.status === AssignmentStatus.IN_TRANSIT);
+      if (hasInTransit) {
+        throw new BadRequestException('Debes finalizar el pedido en tránsito antes de cerrar la ruta');
+      }
 
       await tx.route.update({
         where: { id: routeId },
-        data: { status: 'COMPLETED', completedAt: new Date() },
+        data: { status: RouteStatus.COMPLETED, completedAt: new Date() },
       });
 
-      // Cascada a OBSERVED para los pendientes
+      // Cascada a OBSERVED solo para los pendientes
       await tx.routeAssignment.updateMany({
         where: {
           routeId: routeId,
-          status: { in: ['PENDING', 'IN_TRANSIT'] },
+          status: AssignmentStatus.PENDING,
           voidedAt: null,
         },
-        data: { status: 'OBSERVED', reasonText: 'Jornada terminada por el chofer' },
+        data: { status: AssignmentStatus.OBSERVED, reasonText: 'Jornada finalizada por el chofer' },
       });
 
       return { success: true };

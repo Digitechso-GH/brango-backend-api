@@ -56,18 +56,19 @@ enum RouteStatus {
 }
 
 model Route {
-  id            String            @id @default(uuid())
-  name          String?
-  driverId      String
-  driver        DriverProfile     @relation(fields: [driverId], references: [id])
-  date          DateTime
-  sequenceIndex Int
-  status        RouteStatus       @default(PENDING)
-  startedAt     DateTime?
-  completedAt   DateTime?
-  assignments   RouteAssignment[]
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  id               String            @id @default(uuid())
+  name             String?
+  driverId         String
+  driver           DriverProfile     @relation(fields: [driverId], references: [id])
+  date             DateTime
+  sequenceIndex    Int
+  status           RouteStatus       @default(PENDING)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  overviewPolyline String?
+  assignments      RouteAssignment[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
   
   @@index([driverId])
   @@index([date])
@@ -90,6 +91,8 @@ model RouteAssignment {
   routeId       String?
   route         Route?           @relation(fields: [routeId], references: [id], onDelete: SetNull)
 
+  stopGroupId   String?
+
   previousAssignmentId String?
   previousAssignment   RouteAssignment?  @relation("AssignmentHistory", fields: [previousAssignmentId], references: [id])
   nextAssignments      RouteAssignment[] @relation("AssignmentHistory")
@@ -104,6 +107,7 @@ model RouteAssignment {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
+  @@index([stopGroupId])
   @@index([orderId])
   @@index([driverId])
   @@index([vehicleId])

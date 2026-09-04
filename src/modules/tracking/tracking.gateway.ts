@@ -81,9 +81,9 @@ export class TrackingGateway
       const payload = await this.jwtService.verifyAsync(token, { secret });
 
       client.data.userId = payload.sub;
-      client.data.role = payload.rol;
+      client.data.role = payload.role;
 
-      if (payload.rol === ROLES.SYS_DRIVER) {
+      if (payload.role === ROLES.SYS_DRIVER) {
         const driver = await this.prisma.driverProfile.findUnique({
           where: { userId: payload.sub },
         });
@@ -97,17 +97,17 @@ export class TrackingGateway
           client.disconnect();
           return;
         }
-      } else if (payload.rol === ROLES.SYS_ADMIN || payload.rol === ROLES.SYS_OPERATOR) {
+      } else if (payload.role === ROLES.SYS_ADMIN || payload.role === ROLES.SYS_OPERATOR) {
         await client.join(TRACKING_ROOMS.OPERATOR_LIVE);
       }
 
-      if (payload.rol === ROLES.SYS_DRIVER) {
+      if (payload.role === ROLES.SYS_DRIVER) {
         this.logger.log(
           `Socket conectado (DRIVER): ${client.id} - Usuario: ${payload.name} (DriverID: ${client.data.driverId})`,
         );
       } else {
         this.logger.log(
-          `Socket conectado (STAFF): ${client.id} - Usuario: ${payload.name} (Rol: ${payload.rol})`,
+          `Socket conectado (STAFF): ${client.id} - Usuario: ${payload.name} (Role: ${payload.role})`,
         );
       }
     } catch (err: any) {
@@ -203,6 +203,20 @@ export class TrackingGateway
         orderId,
         timestamp: new Date(),
       });
+    }
+  }
+
+  notifyStopsUpdated(driverId?: string) {
+    if (this.server) {
+      this.server.to(TRACKING_ROOMS.OPERATOR_LIVE).emit('stops:updated', {
+        timestamp: new Date(),
+      });
+      if (driverId) {
+        this.server.to(`driver:${driverId}`).emit('stops:updated', {
+          driverId,
+          timestamp: new Date(),
+        });
+      }
     }
   }
 
