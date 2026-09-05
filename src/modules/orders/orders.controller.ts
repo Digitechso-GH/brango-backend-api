@@ -25,6 +25,8 @@ import { ReorderAssignmentsDto } from './dto/reorder-assignments.dto';
 import { GroupStopsDto } from './dto/group-stops.dto';
 import { UngroupStopDto } from './dto/ungroup-stop.dto';
 import { GroupEvidenceDto } from './dto/group-evidence.dto';
+import { PauseOrderDto } from './dto/pause-order.dto';
+import { OrderPausesService } from './services/order-pauses.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -37,6 +39,7 @@ import type { StorageService } from '../storage/storage.service';
 export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
+    private readonly orderPausesService: OrderPausesService,
     @Inject(STORAGE_SERVICE_TOKEN)
     private readonly storageService: StorageService,
   ) {}
@@ -148,6 +151,36 @@ export class OrdersController {
   @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
   async addGroupEvidence(@Body() dto: GroupEvidenceDto) {
     return this.ordersService.addGroupEvidence(dto);
+  }
+
+  @Get('paused')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async findPaused() {
+    return this.orderPausesService.findPausedOrders();
+  }
+
+  @Patch(':id/pause')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async pauseOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: PauseOrderDto,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.orderPausesService.pauseOrder(id, dto, userId);
+  }
+
+  @Patch(':id/resume')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async resumeOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.orderPausesService.resumeOrder(id, userId);
   }
 
   @Get(':id')

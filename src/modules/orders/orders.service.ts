@@ -27,6 +27,7 @@ const DEFAULT_ORDER_INCLUDE = {
   originBranch: true,
   customer: { include: { company: true } },
   assignments: {
+    where: { voidedAt: null },
     orderBy: { createdAt: 'desc' as const },
     take: 1,
     include: {
@@ -333,6 +334,7 @@ export class OrdersService {
 
     if (driverId) {
       whereCondition = {
+        isPaused: false,
         assignments: {
           some: {
             driverId,
@@ -346,6 +348,7 @@ export class OrdersService {
       };
     } else {
       whereCondition = {
+        isPaused: false,
         OR: [
           { createdAt: { gte: startOfDay, lte: endOfDay } },
           {
@@ -357,6 +360,19 @@ export class OrdersService {
             assignments: {
               some: {
                 date: { gte: startOfDay, lte: endOfDay },
+                voidedAt: null,
+              },
+            },
+          },
+          // Reintentos: pedidos observados previamente que no tienen asignación activa para hoy o fecha futura
+          {
+            assignments: {
+              some: {
+                status: AssignmentStatus.OBSERVED,
+                voidedAt: null,
+              },
+              none: {
+                date: { gte: startOfDay },
                 voidedAt: null,
               },
             },

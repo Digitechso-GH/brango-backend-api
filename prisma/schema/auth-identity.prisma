@@ -6,6 +6,7 @@ model User {
   roleId    String
   role      Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
   driver    DriverProfile?
+  pausedOrders Order[]     @relation("OrderPauseUser")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

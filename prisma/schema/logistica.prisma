@@ -42,11 +42,20 @@ model Order {
   customer   Customer?                @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   assignments       RouteAssignment[]
+
+  // Control de Pausa Comercial (Sin stock, reprogramación cliente, etc.)
+  isPaused          Boolean                  @default(false)
+  pauseReason       String?
+  pausedAt          DateTime?
+  pausedById        String?
+  pausedBy          User?                    @relation("OrderPauseUser", fields: [pausedById], references: [id], onDelete: SetNull)
+
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
 
   @@index([customerId])
   @@index([originBranchId])
+  @@index([isPaused])
 }
 
 enum RouteStatus {

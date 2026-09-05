@@ -29,19 +29,39 @@ export class RoutesService {
         throw new BadRequestException('El chofer ya tiene una ruta activa para este día. Debes esperar a que la finalice.');
       }
 
-      // 2. Validar duplicidad de pedidos si se proporcionan asignaciones
+      // 2. Validar pedidos si se proporcionan asignaciones
       if (assignments.length > 0) {
         const orderIds = assignments.map((a) => a.orderId);
+
+        // Bloquear pedidos en pausa comercial
+        const pausedOrder = await tx.order.findFirst({
+          where: {
+            id: { in: orderIds },
+            isPaused: true,
+          },
+        });
+        if (pausedOrder) {
+          throw new BadRequestException(
+            `El pedido con código ${pausedOrder.code} está en pausa y no puede asignarse a una ruta.`,
+          );
+        }
+
+        // Validar que no tengan asignaciones activas (entregadas, en tránsito o para la misma fecha)
         const existingAssignments = await tx.routeAssignment.findFirst({
           where: {
             orderId: { in: orderIds },
             voidedAt: null,
+            OR: [
+              { status: AssignmentStatus.DELIVERED },
+              { status: AssignmentStatus.IN_TRANSIT },
+              { date: { gte: targetDate, lte: endOfDay } },
+            ],
           },
         });
 
         if (existingAssignments) {
           throw new BadRequestException(
-            `El pedido con ID ${existingAssignments.orderId} ya tiene una asignación vigente en otra ruta.`,
+            `El pedido con ID ${existingAssignments.orderId} ya tiene una asignación activa o ya fue entregado.`,
           );
         }
       }

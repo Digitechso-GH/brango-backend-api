@@ -8,6 +8,7 @@ import { OrdersExcelParserService } from './services/orders-excel-parser.service
 import { OrdersImportService } from './services/orders-import.service';
 import { OrdersCronService } from './orders-cron.service';
 import { OrderStopsGroupingService } from './services/order-stops-grouping.service';
+import { OrderPausesService } from './services/order-pauses.service';
 import { StorageModule } from '../storage/storage.module';
 import { AuthModule } from '../auth/auth.module';
 import { OrdersPublicController } from './orders.public.controller';
@@ -23,6 +24,7 @@ import { OrdersPublicController } from './orders.public.controller';
     OrdersImportService,
     OrdersCronService,
     OrderStopsGroupingService,
+    OrderPausesService,
   ],
   exports: [
     OrdersService,
@@ -32,6 +34,7 @@ import { OrdersPublicController } from './orders.public.controller';
     OrdersImportService,
     OrdersCronService,
     OrderStopsGroupingService,
+    OrderPausesService,
   ],
 })
 export class OrdersModule {}

@@ -446,4 +446,22 @@ export class OrderStopsGroupingService {
       return { success: true };
     });
   }
+
+  async handleOrderRemovedFromGroup(tx: any, stopGroupId: string, driverId?: string, date?: Date) {
+    const remainingInGroup = await tx.routeAssignment.findMany({
+      where: { stopGroupId, voidedAt: null },
+    });
+
+    if (remainingInGroup.length === 1) {
+      await tx.routeAssignment.update({
+        where: { id: remainingInGroup[0].id },
+        data: { stopGroupId: null },
+      });
+    }
+
+    if (driverId && date) {
+      await this.normalizeDriverSequence(tx, driverId, date);
+      this.trackingGateway.notifyStopsUpdated(driverId);
+    }
+  }
 }

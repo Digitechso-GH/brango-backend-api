@@ -33,7 +33,7 @@ CREATE INDEX "Route_date_idx" ON "Route"("date");
 -- Fase 1 (voidedAt): Reemplazar CANCELLED por voidedAt
 UPDATE "RouteAssignment" 
 SET "voidedAt" = CURRENT_TIMESTAMP, "status" = 'PENDING'
-WHERE "status" = 'CANCELLED';
+WHERE "status"::text = 'CANCELLED';
 
 -- Fase 2 (Rutas): Agrupar e insertar Rutas
 WITH RouteGroups AS (
