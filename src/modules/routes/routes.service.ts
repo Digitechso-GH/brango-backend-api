@@ -14,15 +14,22 @@ export class RoutesService {
 
   async createRoute(dto: CreateRouteDto) {
     const { startOfDay: targetDate, endOfDay } = getLimaDayRange(dto.date);
+    const todayStart = getLimaDayRange().startOfDay;
+
+    if (targetDate < todayStart) {
+      throw new BadRequestException('No se pueden programar rutas en fechas pasadas.');
+    }
+
     const assignments = dto.assignments || [];
 
     return this.prisma.$transaction(async (tx: any) => {
-      // 1. Validar que el chofer no tenga ya una ruta activa (PENDING o IN_PROGRESS) en la misma fecha
+      // 1. Validar que el chofer no tenga ya una ruta activa con pedidos activos en la misma fecha
       const activeRouteSameDay = await tx.route.findFirst({
         where: { 
           driverId: dto.driverId, 
           date: { gte: targetDate, lte: endOfDay },
-          status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] }
+          status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
+          assignments: { some: { voidedAt: null } },
         },
       });
       if (activeRouteSameDay) {
@@ -233,50 +240,75 @@ export class RoutesService {
     return route;
   }
 
-  async deleteRoute(id: string) {
+  async cancelRoute(id: string, actor: string = 'system') {
     return this.prisma.$transaction(async (tx: any) => {
       const route = await tx.route.findUnique({
         where: { id },
-        select: { id: true, status: true },
+        select: { id: true, status: true, driverId: true },
       });
 
       if (!route) {
         throw new NotFoundException('Ruta no encontrada');
       }
 
-      if (route.status !== 'PENDING') {
-        throw new BadRequestException('No se puede eliminar una ruta que ya está en progreso o completada.');
+      if (route.status !== RouteStatus.PENDING) {
+        throw new BadRequestException('Solo se pueden cancelar rutas que se encuentren en estado Pendiente.');
       }
 
-      // 1. Eliminar asignaciones asociadas a la ruta para liberar los pedidos
-      await tx.routeAssignment.deleteMany({
-        where: { routeId: id, status: 'PENDING' },
+      // 1. Marcar asignaciones activas como voidedAt y registrar OrderEvent
+      const pendingAssignments = await tx.routeAssignment.findMany({
+        where: { routeId: id, status: AssignmentStatus.PENDING, voidedAt: null },
       });
 
-      // 2. Eliminación atómica garantizando que status === PENDING
-      const result = await tx.route.deleteMany({
-        where: {
-          id,
-          status: 'PENDING',
-        },
-      });
+      for (const assignment of pendingAssignments) {
+        await tx.routeAssignment.update({
+          where: { id: assignment.id },
+          data: { voidedAt: new Date() },
+        });
 
-      if (result.count === 0) {
-        throw new BadRequestException('La ruta ya no se encuentra en estado Pendiente y no pudo ser eliminada.');
+        await tx.orderEvent.create({
+          data: {
+            routeAssignmentId: assignment.id,
+            type: 'DRIVER_UNASSIGNED',
+            actor,
+            metadata: { note: 'Ruta cancelada por operador' },
+          },
+        });
       }
 
-      return { success: true, message: 'Ruta eliminada correctamente' };
+      // 2. Actualizar estado de la ruta a CANCELLED (sin borrado físico)
+      const updatedRoute = await tx.route.update({
+        where: { id },
+        data: { status: RouteStatus.CANCELLED },
+      });
+
+      return { success: true, message: 'Ruta cancelada correctamente', route: updatedRoute };
     });
   }
 
+  async deleteRoute(id: string) {
+    return this.cancelRoute(id, 'system');
+  }
+
   async getMobileRoutes(driverId: string) {
-    const today = getLimaDayRange().startOfDay;
+    const { startOfDay: todayStart } = getLimaDayRange();
 
     return this.prisma.route.findMany({
       where: {
         driverId,
-        date: { gte: today },
-        assignments: { some: {} },
+        status: { not: RouteStatus.CANCELLED },
+        assignments: { some: { voidedAt: null } },
+        OR: [
+          // 1. Todas las rutas no cerradas (pasadas sin cerrar, de hoy o futuras)
+          {
+            status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
+          },
+          // 2. Rutas completadas hoy (historial de jornada del chofer para hoy)
+          {
+            status: RouteStatus.COMPLETED,
+            completedAt: { gte: todayStart },
+          },
+        ],
       },
       include: {
         assignments: {
@@ -295,6 +327,73 @@ export class RoutesService {
     });
   }
 
+  // =========================================================================
+  // [PROVISIONAL - PENDIENTE DE CONFIRMACIÓN DE NEGOCIO POR EL CLIENTE]
+  // Función: Forzar Cierre Administrativo de Ruta en Curso o Pendiente.
+  // Permite a un administrador cerrar una ruta ante contingencias (chofer
+  // ausente, teléfono inoperativo). Si el cliente decide mantener la regla
+  // estricta ("Solo el chofer cierra"), este método y su endpoint en
+  // routes.controller.ts serán eliminados de inmediato.
+  // =========================================================================
+  async forceCloseRouteByAdmin(routeId: string, actor: string = 'admin', reason?: string) {
+    return this.prisma.$transaction(async (tx: any) => {
+      const route = await tx.route.findUnique({
+        where: { id: routeId },
+        include: { assignments: { where: { voidedAt: null } } },
+      });
+      if (!route) throw new NotFoundException('Ruta no encontrada');
+
+      if (route.status === RouteStatus.COMPLETED) {
+        throw new BadRequestException('Esta ruta ya se encuentra completada y cerrada.');
+      }
+      if (route.status === RouteStatus.CANCELLED) {
+        throw new BadRequestException('No se puede forzar el cierre de una ruta cancelada.');
+      }
+
+      // 1. Cerrar ruta forzosamente
+      const updatedRoute = await tx.route.update({
+        where: { id: routeId },
+        data: {
+          status: RouteStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+      });
+
+      // 2. Pasar pedidos no entregados a OBSERVED
+      const uncompletedAssignments = route.assignments.filter(
+        (a: any) => a.status === AssignmentStatus.PENDING || a.status === AssignmentStatus.IN_TRANSIT,
+      );
+
+      for (const assignment of uncompletedAssignments) {
+        await tx.routeAssignment.update({
+          where: { id: assignment.id },
+          data: {
+            status: AssignmentStatus.OBSERVED,
+            reasonText: reason || 'Ruta cerrada forzosamente por contingencia administrativa',
+          },
+        });
+
+        await tx.orderEvent.create({
+          data: {
+            routeAssignmentId: assignment.id,
+            type: 'FORCE_CLOSED_BY_ADMIN',
+            actor,
+            metadata: {
+              note: reason || 'Cierre forzado por administrador por contingencia del chofer',
+              previousStatus: assignment.status,
+            },
+          },
+        });
+      }
+
+      return {
+        success: true,
+        message: 'Ruta cerrada forzosamente por el administrador correctamente',
+        route: updatedRoute,
+      };
+    });
+  }
+
   async completeRoute(routeId: string) {
     return this.prisma.$transaction(async (tx: any) => {
       const route = await tx.route.findUnique({ 
@@ -303,9 +402,44 @@ export class RoutesService {
       });
       if (!route) throw new BadRequestException('Ruta no encontrada');
 
+      if (route.status === RouteStatus.COMPLETED) {
+        throw new BadRequestException('Esta ruta ya fue cerrada previamente por un administrador o por el sistema.');
+      }
+
       const hasInTransit = route.assignments.some((a: any) => a.status === AssignmentStatus.IN_TRANSIT);
       if (hasInTransit) {
         throw new BadRequestException('Debes finalizar el pedido en tránsito antes de cerrar la ruta');
+      }
+
+      // Validar orden secuencial: No se puede cerrar una ruta si existe una ruta previa abierta
+      const { startOfDay: targetDayStart, endOfDay: targetDayEnd } = getLimaDayRange(route.date);
+      const priorOpenRoute = await tx.route.findFirst({
+        where: {
+          driverId: route.driverId,
+          id: { not: route.id },
+          status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
+          assignments: {
+            some: {
+              voidedAt: null,
+              status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
+            },
+          },
+          OR: [
+            // (a) Fecha estrictamente anterior
+            { date: { lt: targetDayStart } },
+            // (b) Misma fecha, pero sequenceIndex menor
+            {
+              date: { gte: targetDayStart, lte: targetDayEnd },
+              sequenceIndex: { lt: route.sequenceIndex },
+            },
+          ],
+        },
+      });
+
+      if (priorOpenRoute) {
+        throw new BadRequestException(
+          'No puedes cerrar esta ruta porque tienes una ruta anterior abierta pendiente de cierre.',
+        );
       }
 
       await tx.route.update({

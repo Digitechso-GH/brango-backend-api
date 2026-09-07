@@ -10,11 +10,13 @@ export class NotificationsService {
   constructor(private readonly whatsappChannel: WhatsappChannel) {}
 
   @OnEvent('order.transit_started')
-  async handleOrderTransitStarted(assignment: RouteAssignment) {
-    this.logger.log(`[Notifications] Capturado evento 'order.transit_started' para asignación ${assignment.id}`);
+  async handleOrderTransitStarted(payload: any) {
+    const assignment: RouteAssignment = payload?.assignment || payload;
+    const siblings: RouteAssignment[] = payload?.siblings || [];
+    this.logger.log(`[Notifications] Capturado evento 'order.transit_started' para asignación ${assignment?.id} (hermanos: ${siblings.length})`);
     
     // Delegar al canal de WhatsApp (Fire and forget, no bloquea el event emitter)
-    this.whatsappChannel.sendTransitNotification(assignment).catch(err => {
+    this.whatsappChannel.sendTransitNotification(assignment, siblings).catch(err => {
       this.logger.error(`[Notifications] Error no controlado en WhatsApp Channel: ${err.message}`);
     });
   }

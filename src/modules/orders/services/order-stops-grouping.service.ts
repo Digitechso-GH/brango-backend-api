@@ -41,34 +41,22 @@ export class OrderStopsGroupingService {
     );
   }
 
-  calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371e3;
-    const phi1 = (lat1 * Math.PI) / 180;
-    const phi2 = (lat2 * Math.PI) / 180;
-    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
-    const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+  isSamePhysicalLocation(
+    lat1?: number | null,
+    lon1?: number | null,
+    lat2?: number | null,
+    lon2?: number | null,
+  ): boolean {
+    if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) {
+      return false;
+    }
+    const ROUNDING_FACTOR = 100000; // 5 decimales (~1.1 metros de precisión)
+    const roundLat1 = Math.round(lat1 * ROUNDING_FACTOR) / ROUNDING_FACTOR;
+    const roundLon1 = Math.round(lon1 * ROUNDING_FACTOR) / ROUNDING_FACTOR;
+    const roundLat2 = Math.round(lat2 * ROUNDING_FACTOR) / ROUNDING_FACTOR;
+    const roundLon2 = Math.round(lon2 * ROUNDING_FACTOR) / ROUNDING_FACTOR;
 
-    const a =
-      Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-      Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c;
-  }
-
-  normalizeAddressForComparison(address?: string | null): string {
-    if (!address) return '';
-    return address
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[.,\-\/#]/g, ' ')
-      .replace(
-        /\b(av|avenida|jr|jiron|cl|calle|psje|pasaje|pje|mza|mz|lote|lt|int|interior|dpto|departamento|urb|urbanizacion)\b/g,
-        '',
-      )
-      .replace(/\s+/g, ' ')
-      .trim();
+    return roundLat1 === roundLat2 && roundLon1 === roundLon2;
   }
 
   async normalizeDriverSequence(tx: any, driverId: string, date: Date) {
@@ -122,12 +110,17 @@ export class OrderStopsGroupingService {
   }
 
   async getDuplicateStopSuggestions(dateStr?: string) {
-    const targetDate = dateStr || getLimaDayjs().format('YYYY-MM-DD');
-    const { startOfDay, endOfDay } = getLimaDayRange(targetDate);
+    let dateWhere: any = undefined;
+    if (dateStr) {
+      const { startOfDay, endOfDay } = getLimaDayRange(dateStr);
+      dateWhere = { gte: startOfDay, lte: endOfDay };
+    }
 
     const assignments = await this.prisma.routeAssignment.findMany({
       where: {
-        date: { gte: startOfDay, lte: endOfDay },
+        ...(dateWhere ? { date: dateWhere } : {
+          status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
+        }),
         voidedAt: null,
         status: { notIn: [AssignmentStatus.OBSERVED] },
       },
@@ -229,34 +222,28 @@ export class OrderStopsGroupingService {
     for (let i = 0; i < ungroupedAssignments.length; i++) {
       const a = ungroupedAssignments[i];
       if (visited.has(a.id)) continue;
+      if (a.order.latitude == null || a.order.longitude == null) continue;
 
       const cluster = [a];
-      const normAddrA = this.normalizeAddressForComparison(a.order.formattedAddress || a.order.rawAddress);
 
       for (let j = i + 1; j < ungroupedAssignments.length; j++) {
         const b = ungroupedAssignments[j];
         if (visited.has(b.id)) continue;
+        if (b.order.latitude == null || b.order.longitude == null) continue;
 
         if (a.driverId !== b.driverId) continue;
 
-        let isMatch = false;
+        // Deben ser para la misma fecha programada de entrega
+        const dateA = new Date(a.date).toISOString().slice(0, 10);
+        const dateB = new Date(b.date).toISOString().slice(0, 10);
+        if (dateA !== dateB) continue;
 
-        const normAddrB = this.normalizeAddressForComparison(b.order.formattedAddress || b.order.rawAddress);
-        if (normAddrA && normAddrB && (normAddrA === normAddrB || normAddrA.includes(normAddrB) || normAddrB.includes(normAddrA))) {
-          isMatch = true;
-        }
-
-        if (!isMatch && a.order.latitude && a.order.longitude && b.order.latitude && b.order.longitude) {
-          const dist = this.calculateDistanceMeters(
-            a.order.latitude,
-            a.order.longitude,
-            b.order.latitude,
-            b.order.longitude,
-          );
-          if (dist <= 50) {
-            isMatch = true;
-          }
-        }
+        const isMatch = this.isSamePhysicalLocation(
+          a.order.latitude,
+          a.order.longitude,
+          b.order.latitude,
+          b.order.longitude,
+        );
 
         if (isMatch) {
           cluster.push(b);
@@ -319,6 +306,15 @@ export class OrderStopsGroupingService {
     const differentDate = assignments.some((a) => a.date.toISOString().split('T')[0] !== firstDate);
     if (differentDate) {
       throw new BadRequestException('Todos los pedidos a consolidar deben pertenecer a la misma fecha');
+    }
+
+    const firstLat = assignments[0].order.latitude;
+    const firstLng = assignments[0].order.longitude;
+    const differentLocation = assignments.some(
+      (a) => !this.isSamePhysicalLocation(firstLat, firstLng, a.order.latitude, a.order.longitude),
+    );
+    if (differentLocation) {
+      throw new BadRequestException('Todos los pedidos a consolidar deben compartir la misma ubicación física exacta (coordenadas a 5 decimales)');
     }
 
     // CANDADO DE ESTADO: Validar que la Route esté en estado PENDING

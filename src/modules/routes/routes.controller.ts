@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { RoutesService } from './routes.service';
 import { CreateRouteDto, GetRoutesQueryDto } from './routes.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -38,11 +38,35 @@ export class RoutesController {
     return this.routesService.findOne(id);
   }
 
+  @Patch(':id/cancel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async cancelRoute(@Param('id') id: string, @Request() req: any) {
+    const actor = req.user?.name || req.user?.email || 'system';
+    return this.routesService.cancelRoute(id, actor);
+  }
+
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
   async deleteRoute(@Param('id') id: string) {
     return this.routesService.deleteRoute(id);
+  }
+
+  // =========================================================================
+  // [PROVISIONAL - PENDIENTE DE CONFIRMACIÓN DE NEGOCIO POR EL CLIENTE]
+  // Endpoint: Forzar Cierre Administrativo de Ruta ante contingencias.
+  // =========================================================================
+  @Post(':id/force-close')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async forceCloseRoute(
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+    @Request() req: any,
+  ) {
+    const actor = req.user?.name || req.user?.email || 'admin';
+    return this.routesService.forceCloseRouteByAdmin(id, actor, reason);
   }
 
   @Post(':id/complete')

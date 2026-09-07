@@ -125,6 +125,9 @@ export class DriversService {
             status: {
               in: ['PENDING', 'IN_PROGRESS'],
             },
+            assignments: {
+              some: { voidedAt: null },
+            },
           }
         }
       },

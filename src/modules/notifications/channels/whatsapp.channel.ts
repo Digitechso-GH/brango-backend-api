@@ -3,7 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AssignmentStatus } from '@prisma/client';
 import { calculateRouteETA } from '../../orders/helpers/geocoding.helper';
 const HEADER_IMAGE_POOL = [
-  'https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png'
+  'https://brango.syncrodg.com/logo.png'
 ];
 
 const EVENT_TYPES = {
@@ -11,14 +11,25 @@ const EVENT_TYPES = {
   FAILED: 'WHATSAPP_NOTIFICATION_FAILED'
 };
 
+function formatOrderCodesSummary(codes: string[]): string {
+  if (codes.length === 0) return '';
+  if (codes.length === 1) return codes[0];
+  if (codes.length === 2) return `${codes[0]} y ${codes[1]}`;
+  if (codes.length === 3) return `${codes[0]}, ${codes[1]} y ${codes[2]}`;
+  
+  // Truncado elegante y seguro para límites de caracteres de Meta en casos extremos (4+ pedidos)
+  const remaining = codes.length - 2;
+  return `${codes[0]}, ${codes[1]} y ${remaining} más`;
+}
+
 @Injectable()
 export class WhatsappChannel {
   private readonly logger = new Logger(WhatsappChannel.name);
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async sendTransitNotification(assignment: any) {
-    this.logger.log(`[WhatsApp] Intentando envío real de notificación IN_TRANSIT a Meta para asignación ${assignment.id}...`);
+  async sendTransitNotification(assignment: any, siblings: any[] = []) {
+    this.logger.log(`[WhatsApp] Intentando envío real de notificación IN_TRANSIT a Meta para asignación ${assignment?.id} (hermanos: ${siblings?.length || 0})...`);
     
     const token = process.env.WHATSAPP_TOKEN;
     const phoneId = process.env.WHATSAPP_PHONE_ID;
@@ -34,62 +45,101 @@ export class WhatsappChannel {
     }
 
     if (!token || !phoneId || !adminPhone) {
-      this.logger.error(`[WhatsApp] Faltan credenciales de entorno. Abortando envío para asignación ${assignment.id}.`);
+      this.logger.error(`[WhatsApp] Faltan credenciales de entorno. Abortando envío para asignación ${assignment?.id}.`);
       return;
     }
 
-    const appUrl = process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || process.env.APP_URL || 'https://brango.syncrodg.com';
-    let trackingUrl = '';
-
     try {
-      // 1. Obtener la orden completa para sacar datos y teléfono
-      const fullAssignment = await this.prisma.routeAssignment.findUnique({
-        where: { id: assignment.id },
-        include: { order: true, driver: { include: { user: true } } },
+      // 1. Obtener todas las asignaciones completas de la parada (principal + hermanos)
+      const allAssignmentIds = [assignment.id, ...(siblings || []).map((s: any) => s.id)];
+      const fullAssignments = await this.prisma.routeAssignment.findMany({
+        where: { id: { in: allAssignmentIds } },
+        include: {
+          order: { include: { customer: true } },
+          driver: { include: { user: true } },
+        },
+        orderBy: { sequenceIndex: 'asc' },
       });
 
-      if (!fullAssignment || !fullAssignment.order) return;
+      if (!fullAssignments || fullAssignments.length === 0) return;
 
-      const orderCode = fullAssignment.order.code || fullAssignment.order.id.slice(0, 8);
-      const driverName = fullAssignment.driver?.user?.name || 'Nuestro chofer';
-      const customerName = fullAssignment.order.recipientName || 'nuestro cliente';
-      const trackingToken = fullAssignment.order.publicTrackingToken || orderCode;
-      trackingUrl = `${appUrl}/seguimiento/${trackingToken}`;
+      const first = fullAssignments[0];
+      const driverName = first.driver?.user?.name || 'Nuestro chofer';
 
-      // 2. Disparo al Administrador (Plantilla de Alerta)
+      // 2. Disparo al Administrador (1 SOLA alerta para la parada)
+      const allOrderCodes = fullAssignments.map((fa) => fa.order.code || fa.order.id.slice(0, 8));
+      const adminOrderCodeText = formatOrderCodesSummary(allOrderCodes);
+
+      const distinctCustomerNames = Array.from(
+        new Set(fullAssignments.map((fa) => fa.order.customer?.name || fa.order.recipientName || 'nuestro cliente'))
+      ).join(' / ');
+
       const adminComponents = [
         {
           type: 'body',
           parameters: [
             { type: 'text', parameter_name: 'driver_name', text: driverName },
-            { type: 'text', parameter_name: 'order_id', text: orderCode },
-            { type: 'text', parameter_name: 'customer_name', text: customerName }
+            { type: 'text', parameter_name: 'order_id', text: adminOrderCodeText },
+            { type: 'text', parameter_name: 'customer_name', text: distinctCustomerNames }
           ]
         }
       ];
       await this.sendTemplateToMeta(token, phoneId, adminPhone, 'admin_order_alert', 'es_PE', adminComponents);
 
-      // 3. Disparo al Cliente (Plantilla con Link de Seguimiento)
-      if (fullAssignment.order.recipientPhone) {
-        let customerPhone = fullAssignment.order.recipientPhone.replace(/\D/g, '');
+      // 3. Disparo al Cliente (Agrupación ESTRICTA únicamente por customerId)
+      const logoConfig = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_logo_url' } });
+      const finalImage = logoConfig?.value || HEADER_IMAGE_POOL[0];
+
+      let etaText = '30 a 60 minutos';
+      if (first.originLatitude && first.originLongitude && first.order.latitude && first.order.longitude) {
+        const dynamicEta = await calculateRouteETA(
+          first.originLatitude,
+          first.originLongitude,
+          first.order.latitude,
+          first.order.longitude
+        );
+        if (dynamicEta) {
+          etaText = dynamicEta;
+        }
+      }
+
+      // Agrupar asignaciones estrictamente por customerId
+      const customerBatches = new Map<string, typeof fullAssignments>();
+      const unassignedCustomerAssignments: typeof fullAssignments = [];
+
+      for (const fa of fullAssignments) {
+        if (fa.order.customerId) {
+          if (!customerBatches.has(fa.order.customerId)) {
+            customerBatches.set(fa.order.customerId, []);
+          }
+          customerBatches.get(fa.order.customerId)!.push(fa);
+        } else {
+          unassignedCustomerAssignments.push(fa);
+        }
+      }
+
+      const clientDeliveryGroups: Array<typeof fullAssignments> = [
+        ...Array.from(customerBatches.values()),
+        ...unassignedCustomerAssignments.map((it) => [it]),
+      ];
+
+      for (const groupItems of clientDeliveryGroups) {
+        const leadItem = groupItems[0];
+        if (!leadItem.order.recipientPhone) continue;
+
+        let customerPhone = leadItem.order.recipientPhone.replace(/\D/g, '');
         if (customerPhone.length === 9) {
           customerPhone = '51' + customerPhone;
         }
 
-        const logoConfig = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_logo_url' } });
-        const finalImage = logoConfig?.value || HEADER_IMAGE_POOL[0];
+        const groupCodes = groupItems.map((gi) => gi.order.code || gi.order.id.slice(0, 8));
+        const clientOrderCodeText = formatOrderCodesSummary(groupCodes);
 
-        let etaText = '30 a 60 minutos';
-        if (fullAssignment.originLatitude && fullAssignment.originLongitude && fullAssignment.order.latitude && fullAssignment.order.longitude) {
-          const dynamicEta = await calculateRouteETA(
-            fullAssignment.originLatitude,
-            fullAssignment.originLongitude,
-            fullAssignment.order.latitude,
-            fullAssignment.order.longitude
-          );
-          if (dynamicEta) {
-            etaText = dynamicEta;
-          }
+        const trackingToken = leadItem.order.publicTrackingToken || leadItem.order.code;
+
+        if (process.env.NODE_ENV !== 'production') {
+          const appUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000';
+          this.logger.log(`🔗 [DEV TRACKING URL]: ${appUrl}/seguimiento/${trackingToken}`);
         }
 
         const clientComponents = [
@@ -106,7 +156,7 @@ export class WhatsappChannel {
             type: 'body',
             parameters: [
               { type: 'text', parameter_name: 'store_name', text: 'BranGo' },
-              { type: 'text', parameter_name: 'order_id', text: orderCode },
+              { type: 'text', parameter_name: 'order_id', text: clientOrderCodeText },
               { type: 'text', parameter_name: 'eta', text: etaText }
             ]
           },
@@ -123,50 +173,26 @@ export class WhatsappChannel {
           }
         ];
 
-        // Intentar envío con botón de tracking; si la plantilla en Meta no tiene botón configurado, fallback al payload estándar
         try {
           await this.sendTemplateToMeta(token, phoneId, customerPhone, 'order_in_transit', 'es_PE', clientComponents);
         } catch (btnErr: any) {
-          this.logger.warn(`[WhatsApp] Reintentando envío de order_in_transit sin componente de botón dinámico: ${btnErr.message}`);
+          this.logger.warn(`[WhatsApp] Reintentando envío de order_in_transit sin botón dinámico: ${btnErr.message}`);
           await this.sendTemplateToMeta(token, phoneId, customerPhone, 'order_in_transit', 'es_PE', clientComponents.slice(0, 2));
         }
       }
 
     } catch (error: any) {
-      this.logger.error(`[WhatsApp] Fallo de envío a Meta para asignación ${assignment.id}: ${error.message}`);
+      this.logger.error(`[WhatsApp] Fallo de envío a Meta para parada de asignación ${assignment?.id}: ${error.message}`);
       
-      // Registrar evento de falla explícito en la base de datos para auditoría y reintento manual
       await this.prisma.orderEvent.create({
         data: {
           routeAssignmentId: assignment.id,
-          type: EVENT_TYPES.FAILED,
+          type: 'TRANSIT_NOTIFICATION_FAILED',
           actor: 'system',
-          metadata: { 
-            channel: 'whatsapp',
-            template: 'order_in_transit',
-            reason: error.message,
-            trackingUrl: trackingUrl || undefined,
-            failedAt: new Date().toISOString(),
-          },
+          metadata: { error: error.message },
         },
       });
-      return;
     }
-
-    this.logger.log(`[WhatsApp] Notificación IN_TRANSIT enviada exitosamente para ${assignment.id}. Tracking URL: ${trackingUrl}`);
-    
-    await this.prisma.orderEvent.create({
-      data: {
-        routeAssignmentId: assignment.id,
-        type: EVENT_TYPES.SENT,
-        actor: 'system',
-        metadata: { 
-          channel: 'whatsapp', 
-          template: 'order_in_transit',
-          trackingUrl,
-        },
-      },
-    });
   }
 
   async sendCompletionNotification(assignment: any) {

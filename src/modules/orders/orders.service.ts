@@ -575,6 +575,10 @@ export class OrdersService {
             metadata: { note: 'Chofer removido (Sin Asignar)' }
           }
         });
+
+        if (activeAssignment.routeId) {
+          await this.cleanEmptyRouteIfNeeded(activeAssignment.routeId);
+        }
       }
       if (deleteResult.count === 0) {
         throw new BadRequestException('No se puede remover el chofer porque es posible que ya haya iniciado la ruta de este pedido.');
@@ -595,7 +599,7 @@ export class OrdersService {
       throw new NotFoundException('Pedido no encontrado');
     }
 
-    if (existing.assignments && existing.assignments.length > 0) {
+    if (existing.assignments && existing.assignments.length > 0 && !dto.removeDriver) {
       throw new BadRequestException(
         'No se puede editar este pedido porque ya se encuentra asignado a una ruta o chofer.',
       );
@@ -612,6 +616,60 @@ export class OrdersService {
     }
 
     return this.findOne(id);
+  }
+
+  /**
+   * Valida que el conductor no tenga ninguna ruta anterior abierta (PENDING o IN_PROGRESS)
+   * con entregas activas sin finalizar.
+   *
+   * Regla de separación estricta:
+   * (a) Cualquier fecha estrictamente anterior al inicio del día objetivo (date < targetDayStart)
+   *     bloquea sin importar el sequenceIndex.
+   * (b) Solo dentro del mismo día calendario (targetDayStart <= date <= targetDayEnd),
+   *     se compara por sequenceIndex estrictamente menor.
+   */
+  async assertNoUnclosedPriorRoutes(
+    driverId: string,
+    targetDate: Date | string,
+    currentSequenceIndex?: number,
+    excludeRouteId?: string,
+  ): Promise<void> {
+    const { startOfDay: targetDayStart, endOfDay: targetDayEnd } = getLimaDayRange(targetDate);
+
+    const priorOpenRoute = await this.prisma.route.findFirst({
+      where: {
+        driverId,
+        ...(excludeRouteId ? { id: { not: excludeRouteId } } : {}),
+        status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
+        assignments: {
+          some: {
+            voidedAt: null,
+            status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
+          },
+        },
+        OR: [
+          // (a) Fecha estrictamente anterior en Lima (bloquea sin importar sequenceIndex)
+          {
+            date: { lt: targetDayStart },
+          },
+          // (b) Misma fecha, pero sequenceIndex estrictamente menor
+          ...(currentSequenceIndex !== undefined
+            ? [
+                {
+                  date: { gte: targetDayStart, lte: targetDayEnd },
+                  sequenceIndex: { lt: currentSequenceIndex },
+                },
+              ]
+            : []),
+        ],
+      },
+    });
+
+    if (priorOpenRoute) {
+      throw new BadRequestException(
+        'No puedes iniciar este recorrido porque tienes una ruta anterior abierta sin finalizar.',
+      );
+    }
   }
 
   async updateStatus(routeAssignmentId: string, dto: UpdateOrderStatusDto) {
@@ -632,6 +690,26 @@ export class OrdersService {
 
       if (assignmentDate.isBefore(todayStart) || assignmentDate.isAfter(todayEnd)) {
         throw new BadRequestException('Solo puedes iniciar recorridos programados para el día de hoy.');
+      }
+
+      // Validar que el chofer no tenga rutas anteriores abiertas sin finalizar
+      if (existing.routeId) {
+        const currentRoute = await this.prisma.route.findUnique({
+          where: { id: existing.routeId },
+          select: { id: true, sequenceIndex: true, date: true },
+        });
+
+        await this.assertNoUnclosedPriorRoutes(
+          existing.driverId,
+          existing.date,
+          currentRoute?.sequenceIndex,
+          currentRoute?.id,
+        );
+      } else {
+        await this.assertNoUnclosedPriorRoutes(
+          existing.driverId,
+          existing.date,
+        );
       }
 
       const activeAssignment = await this.prisma.routeAssignment.findFirst({
@@ -757,10 +835,10 @@ export class OrdersService {
     });
 
     if (dto.status === AssignmentStatus.IN_TRANSIT) {
-      this.eventEmitter.emit('order.transit_started', updated.assignment);
-      for (const sib of updated.siblingUpdatedList) {
-        this.eventEmitter.emit('order.transit_started', sib);
-      }
+      this.eventEmitter.emit('order.transit_started', {
+        assignment: updated.assignment,
+        siblings: updated.siblingUpdatedList,
+      });
     } else if (dto.status === AssignmentStatus.DELIVERED || dto.status === AssignmentStatus.OBSERVED) {
       this.eventEmitter.emit('order.completed', updated.assignment);
     }
@@ -1031,6 +1109,31 @@ export class OrdersService {
       }
     }
 
+    let groupedOrders: Array<{ code: string; waybill: string | null }> = [];
+
+    if (activeAssignment?.stopGroupId && order.customerId) {
+      const siblingAssignments = await this.prisma.routeAssignment.findMany({
+        where: {
+          stopGroupId: activeAssignment.stopGroupId,
+          id: { not: activeAssignment.id },
+          voidedAt: null,
+          order: {
+            customerId: order.customerId, // PRIVACIDAD ESTRICTA: SOLO DEL MISMO CLIENTE
+          },
+        },
+        include: {
+          order: {
+            select: { code: true, waybill: true },
+          },
+        },
+      });
+
+      groupedOrders = siblingAssignments.map((sa) => ({
+        code: sa.order.code,
+        waybill: sa.order.waybill,
+      }));
+    }
+
     return {
       orderId: order.id,
       code: order.code,
@@ -1047,8 +1150,36 @@ export class OrdersService {
       driver: driverInfo,
       driverLocation: driverLocation,
       events: activeAssignment?.events || [],
+      groupedOrders,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     };
   }
+
+  async cleanEmptyRouteIfNeeded(routeId: string, tx?: any) {
+    const client = tx || this.prisma;
+    const remainingActive = await client.routeAssignment.count({
+      where: { routeId, voidedAt: null },
+    });
+
+    if (remainingActive === 0) {
+      const route = await client.route.findUnique({
+        where: { id: routeId },
+        select: { status: true },
+      });
+
+      if (route?.status === RouteStatus.PENDING) {
+        await client.route.update({
+          where: { id: routeId },
+          data: { status: RouteStatus.CANCELLED },
+        });
+      } else if (route?.status === RouteStatus.IN_PROGRESS) {
+        await client.route.update({
+          where: { id: routeId },
+          data: { status: RouteStatus.COMPLETED, completedAt: new Date() },
+        });
+      }
+    }
+  }
+
 }

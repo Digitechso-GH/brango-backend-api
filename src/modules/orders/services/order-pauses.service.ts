@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderStopsGroupingService } from './order-stops-grouping.service';
-import { AssignmentStatus } from '@prisma/client';
+import { AssignmentStatus, RouteStatus } from '@prisma/client';
 import { PauseOrderDto } from '../dto/pause-order.dto';
 
 @Injectable()
@@ -68,6 +68,29 @@ export class OrderPausesService {
               pa.driverId,
               pa.date,
             );
+          }
+
+          if (pa.routeId) {
+            const remainingActive = await tx.routeAssignment.count({
+              where: { routeId: pa.routeId, voidedAt: null },
+            });
+            if (remainingActive === 0) {
+              const route = await tx.route.findUnique({
+                where: { id: pa.routeId },
+                select: { status: true },
+              });
+              if (route?.status === RouteStatus.PENDING) {
+                await tx.route.update({
+                  where: { id: pa.routeId },
+                  data: { status: RouteStatus.CANCELLED },
+                });
+              } else if (route?.status === RouteStatus.IN_PROGRESS) {
+                await tx.route.update({
+                  where: { id: pa.routeId },
+                  data: { status: RouteStatus.COMPLETED, completedAt: new Date() },
+                });
+              }
+            }
           }
         }
       }

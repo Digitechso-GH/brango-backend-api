@@ -62,6 +62,7 @@ enum RouteStatus {
   PENDING
   IN_PROGRESS
   COMPLETED
+  CANCELLED
 }
 
 model Route {
