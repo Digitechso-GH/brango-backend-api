@@ -114,7 +114,7 @@ export class OrdersService {
           originBranchId: dto.originBranchId,
           customerId: resolvedCustomerId,
           warehouseContact: dto.warehouseContact || null,
-          dueDate: dto.dueDate ? getLimaDayjs(dto.dueDate).toDate() : null,
+          dueDate: dto.dueDate ? getLimaDayjs(dto.dueDate).endOf('day').toDate() : null,
         },
       });
 
@@ -475,7 +475,7 @@ export class OrdersService {
 
     if (dto.dueDate !== undefined) {
       updateData.dueDate = dto.dueDate && String(dto.dueDate).trim() !== ''
-        ? getLimaDayjs(dto.dueDate).toDate()
+        ? getLimaDayjs(dto.dueDate).endOf('day').toDate()
         : null;
     }
     for (const key of validFields) {
