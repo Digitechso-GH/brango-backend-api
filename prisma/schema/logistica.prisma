@@ -50,6 +50,8 @@ model Order {
   pausedById        String?
   pausedBy          User?                    @relation("OrderPauseUser", fields: [pausedById], references: [id], onDelete: SetNull)
 
+  dueDate           DateTime?
+
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
 

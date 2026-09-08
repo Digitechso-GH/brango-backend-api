@@ -169,7 +169,7 @@ export class RoutesService {
           },
         },
       },
-      orderBy: [{ date: 'desc' }, { sequenceIndex: 'asc' }],
+      orderBy: [{ date: 'desc' }, { sequenceIndex: 'desc' }, { createdAt: 'desc' }],
       skip: (page - 1) * limit,
       take: limit,
     });

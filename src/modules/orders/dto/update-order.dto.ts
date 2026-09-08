@@ -74,4 +74,7 @@ export class UpdateOrderDto {
   @IsString()
   @IsOptional()
   warehouseContact?: string;
+
+  @IsOptional()
+  dueDate?: string | Date;
 }

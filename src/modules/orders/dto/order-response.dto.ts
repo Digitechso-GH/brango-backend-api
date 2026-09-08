@@ -29,6 +29,9 @@ export class OrderResponseDto {
   warehouseContact: string | null;
 
   @Expose()
+  dueDate: Date | null;
+
+  @Expose()
   rawAddress: string;
 
   @Expose()

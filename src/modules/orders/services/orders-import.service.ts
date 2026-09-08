@@ -56,6 +56,7 @@ export class OrdersImportService {
                 geocodingStatus: item.geocodingStatus as GeocodingStatus,
                 customerId: resolvedCustomerId,
                 warehouseContact: item.warehouseContact,
+                dueDate: item.dueDate || null,
               },
             });
 

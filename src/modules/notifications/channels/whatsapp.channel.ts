@@ -55,7 +55,7 @@ export class WhatsappChannel {
       const fullAssignments = await this.prisma.routeAssignment.findMany({
         where: { id: { in: allAssignmentIds } },
         include: {
-          order: { include: { customer: true } },
+          order: { include: { customer: true, originBranch: true } },
           driver: { include: { user: true } },
         },
         orderBy: { sequenceIndex: 'asc' },
@@ -91,16 +91,26 @@ export class WhatsappChannel {
       const finalImage = logoConfig?.value || HEADER_IMAGE_POOL[0];
 
       let etaText = '30 a 60 minutos';
-      if (first.originLatitude && first.originLongitude && first.order.latitude && first.order.longitude) {
+      const originLat = first.originLatitude ?? first.order?.originBranch?.latitude;
+      const originLng = first.originLongitude ?? first.order?.originBranch?.longitude;
+      const destLat = first.order?.latitude;
+      const destLng = first.order?.longitude;
+
+      if (originLat && originLng && destLat && destLng) {
         const dynamicEta = await calculateRouteETA(
-          first.originLatitude,
-          first.originLongitude,
-          first.order.latitude,
-          first.order.longitude
+          originLat,
+          originLng,
+          destLat,
+          destLng
         );
         if (dynamicEta) {
           etaText = dynamicEta;
+          this.logger.log(`[WhatsApp] ETA en tiempo real calculado por Google Maps para pedido ${first.order?.code}: ${etaText}`);
+        } else {
+          this.logger.warn(`[WhatsApp] Google Maps no devolvió ETA para pedido ${first.order?.code}. Usando fallback: ${etaText}`);
         }
+      } else {
+        this.logger.warn(`[WhatsApp] Coordenadas insuficientes para calcular ETA (origin: ${originLat},${originLng} | dest: ${destLat},${destLng}). Usando fallback: ${etaText}`);
       }
 
       // Agrupar asignaciones estrictamente por customerId

@@ -77,4 +77,7 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   warehouseContact?: string;
+
+  @IsOptional()
+  dueDate?: string | Date;
 }

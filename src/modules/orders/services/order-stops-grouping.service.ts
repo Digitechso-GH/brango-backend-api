@@ -118,11 +118,13 @@ export class OrderStopsGroupingService {
 
     const assignments = await this.prisma.routeAssignment.findMany({
       where: {
-        ...(dateWhere ? { date: dateWhere } : {
-          status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
-        }),
+        ...(dateWhere ? { date: dateWhere } : {}),
+        status: { in: [AssignmentStatus.PENDING, AssignmentStatus.IN_TRANSIT] },
         voidedAt: null,
-        status: { notIn: [AssignmentStatus.OBSERVED] },
+        OR: [
+          { routeId: null },
+          { route: { status: { notIn: [RouteStatus.COMPLETED] } } },
+        ],
       },
       include: {
         order: {
@@ -232,6 +234,7 @@ export class OrderStopsGroupingService {
         if (b.order.latitude == null || b.order.longitude == null) continue;
 
         if (a.driverId !== b.driverId) continue;
+        if (a.routeId !== b.routeId) continue;
 
         // Deben ser para la misma fecha programada de entrega
         const dateA = new Date(a.date).toISOString().slice(0, 10);

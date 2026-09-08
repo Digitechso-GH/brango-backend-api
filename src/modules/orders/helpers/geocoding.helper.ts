@@ -1,3 +1,27 @@
+
+export function formatEtaRange(totalMinutes: number): string {
+  if (totalMinutes <= 10) {
+    return '10 a 20 minutos';
+  }
+  if (totalMinutes < 60) {
+    const minMins = Math.max(10, Math.floor(totalMinutes / 5) * 5);
+    const maxMins = minMins + 15;
+    return `${minMins} a ${maxMins} minutos`;
+  }
+  
+  const minMins = Math.floor(totalMinutes / 5) * 5;
+  const maxMins = minMins + 20;
+  
+  const formatTime = (mins: number) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (m === 0) return `${h} hora${h > 1 ? 's' : ''}`;
+    return `${h} hora${h > 1 ? 's' : ''} y ${m} min`;
+  };
+
+  return `${formatTime(minMins)} a ${formatTime(maxMins)}`;
+}
+
 import { GeocodingStatus } from '@prisma/client';
 
 export async function resolveGeocodingFromUrl(
@@ -125,12 +149,14 @@ export async function calculateRouteETA(originLat: number, originLng: number, de
   if (!apiKey) return null;
 
   try {
+    const referer = process.env.PUBLIC_APP_URL || 'http://localhost:3000/';
     const res = await fetch(`https://routes.googleapis.com/directions/v2:computeRoutes`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': apiKey,
         'X-Goog-FieldMask': 'routes.duration',
+        'Referer': referer,
       },
       body: JSON.stringify({
         origin: {
@@ -156,17 +182,17 @@ export async function calculateRouteETA(originLat: number, originLng: number, de
     });
 
     const data = await res.json();
+    if (data.error) {
+      console.error(`[Google Routes API Error]: ${data.error.code} - ${data.error.message}`);
+      return null;
+    }
     if (data.routes && data.routes.length > 0 && data.routes[0].duration) {
       // duration comes as "1500s"
       const seconds = parseInt(data.routes[0].duration.replace('s', ''));
       if (isNaN(seconds)) return null;
 
       const totalMinutes = Math.round(seconds / 60);
-      if (totalMinutes < 60) return `${totalMinutes} minutos`;
-      
-      const hours = Math.floor(totalMinutes / 60);
-      const mins = totalMinutes % 60;
-      return mins > 0 ? `${hours} hora(s) y ${mins} minutos` : `${hours} hora(s)`;
+      return formatEtaRange(totalMinutes);
     }
     return null;
   } catch (e) {
