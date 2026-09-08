@@ -25,6 +25,7 @@ describe('OrdersService - importExcel E2E integration test', () => {
       order: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
+        upsert: jest.fn().mockImplementation((args) => args.create || args.update),
       },
       $transaction: jest.fn().mockImplementation((cb) => cb(prismaService)),
     };
@@ -91,6 +92,6 @@ describe('OrdersService - importExcel E2E integration test', () => {
     const result = await ordersService.importExcel(Buffer.from('fake-excel'), 'user-1');
 
     expect(result.importedCount).toBe(2);
-    expect(prismaService.order.create).toHaveBeenCalledTimes(2);
+    expect(prismaService.order.upsert).toHaveBeenCalledTimes(2);
   });
 });

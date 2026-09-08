@@ -41,9 +41,25 @@ export class OrdersImportService {
           const resolvedCustomerId = clientMap.get(cacheKey) || null;
 
           try {
-            const order = await txPrisma.order.create({
-              data: {
+            const order = await txPrisma.order.upsert({
+              where: { code: item.code },
+              create: {
                 code: item.code,
+                waybill: item.waybill,
+                recipientCustomerType: item.recipientCustomerType,
+                recipientDocument: item.recipientDocument,
+                recipientName: item.recipientName,
+                recipientPhone: item.recipientPhone,
+                rawAddress: item.rawAddress,
+                formattedAddress: item.formattedAddress,
+                latitude: item.latitude,
+                longitude: item.longitude,
+                geocodingStatus: item.geocodingStatus as GeocodingStatus,
+                customerId: resolvedCustomerId,
+                warehouseContact: item.warehouseContact,
+                dueDate: item.dueDate || null,
+              },
+              update: {
                 waybill: item.waybill,
                 recipientCustomerType: item.recipientCustomerType,
                 recipientDocument: item.recipientDocument,
