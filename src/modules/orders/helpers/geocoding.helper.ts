@@ -64,12 +64,17 @@ export async function resolveGeocodingFromUrl(
     }
   }
 
-  // Extraer las ÚLTIMAS coordenadas válidas si hay direcciones anidadas en la URL
-  const atMatches = Array.from(targetText.matchAll(/@(-?\d+\.\d+),(-?\d+\.\d+)/g));
+  // Extraer coordenadas con prioridad estricta:
+  // 1. Coordenadas exactas del pin del lugar (!3d{lat}!4d{lng})
+  // 2. Parámetros de consulta directos (?q=lat,lng o ?ll=lat,lng)
+  // 3. Fallback: Posición de cámara del mapa (@lat,lng) - solo si no hay pin explícito
+  // 4. Coordenadas en texto plano
   const embeddedMatches = Array.from(targetText.matchAll(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/g));
+  const queryMatches = Array.from(targetText.matchAll(/[?&](?:q|query|ll)=(-?\d+\.\d+),(-?\d+\.\d+)/g));
+  const atMatches = Array.from(targetText.matchAll(/@(-?\d+\.\d+),(-?\d+\.\d+)/g));
   const directMatches = Array.from(targetText.matchAll(/(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/g));
 
-  const lastMatch = atMatches.pop() || embeddedMatches.pop() || directMatches.pop();
+  const lastMatch = embeddedMatches.pop() || queryMatches.pop() || atMatches.pop() || directMatches.pop();
 
   if (lastMatch && lastMatch[1] && lastMatch[2]) {
     const lat = parseFloat(lastMatch[1]);
