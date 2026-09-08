@@ -27,8 +27,9 @@ export class RoutesController {
   @Get('mobile')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.SYS_DRIVER)
-  async getMobileRoutes(@Request() req: any) {
-    return this.routesService.getMobileRoutes(req.user.driverId || req.user.id);
+  async getMobileRoutes(@Request() req: any, @Query('driverId') queryDriverId?: string) {
+    const target = req.user.driverId || queryDriverId || req.user.sub;
+    return this.routesService.getMobileRoutes(target);
   }
 
   @Get(':id')

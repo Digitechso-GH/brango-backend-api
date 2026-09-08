@@ -327,18 +327,34 @@ export class OrdersService {
     };
   }
 
-  async findToday(driverId?: string) {
+  async findToday(driverIdOrUserId?: string) {
     const targetDate = new Date();
     const { startOfDay, endOfDay } = getLimaDayRange(targetDate);
 
+    let resolvedDriverId = driverIdOrUserId;
+    if (driverIdOrUserId) {
+      const profile = await this.prisma.driverProfile.findFirst({
+        where: {
+          OR: [
+            { id: driverIdOrUserId },
+            { userId: driverIdOrUserId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (profile) {
+        resolvedDriverId = profile.id;
+      }
+    }
+
     let whereCondition: any;
 
-    if (driverId) {
+    if (resolvedDriverId) {
       whereCondition = {
         isPaused: false,
         assignments: {
           some: {
-            driverId,
+            driverId: resolvedDriverId,
             voidedAt: null,
             OR: [
               { date: { gte: startOfDay, lte: endOfDay } },

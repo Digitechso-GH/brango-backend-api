@@ -290,12 +290,34 @@ export class RoutesService {
     return this.cancelRoute(id, 'system');
   }
 
-  async getMobileRoutes(driverId: string) {
+  async getMobileRoutes(driverIdOrUserId?: string) {
+    if (!driverIdOrUserId) {
+      return [];
+    }
+
+    // Resolver driverId ya sea que venga como DriverProfile.id o como User.id
+    let resolvedDriverId = driverIdOrUserId;
+    const profile = await this.prisma.driverProfile.findFirst({
+      where: {
+        OR: [
+          { id: driverIdOrUserId },
+          { userId: driverIdOrUserId },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (profile) {
+      resolvedDriverId = profile.id;
+    } else {
+      return [];
+    }
+
     const { startOfDay: todayStart } = getLimaDayRange();
 
     return this.prisma.route.findMany({
       where: {
-        driverId,
+        driverId: resolvedDriverId,
         status: { not: RouteStatus.CANCELLED },
         assignments: { some: { voidedAt: null } },
         OR: [

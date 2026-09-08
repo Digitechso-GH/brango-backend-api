@@ -35,18 +35,6 @@ export class AuthService {
   }
 
   async login(user: any) {
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role.code,
-    };
-
-    const secret = this.configService.get<string>('JWT_SECRET', 'super_secret_key_change_me_in_production');
-    // Generar access token de 7 días y refresh token de 30 días
-    const token = this.jwtService.sign(payload, { secret, expiresIn: '7d' });
-    const refreshToken = this.jwtService.sign({ sub: user.id }, { secret, expiresIn: '30d' });
-
     let driverId = undefined;
     let unit = undefined;
 
@@ -57,6 +45,19 @@ export class AuthService {
         unit = fullUser.driver.unit;
       }
     }
+
+    const payload: any = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role.code,
+      driverId,
+    };
+
+    const secret = this.configService.get<string>('JWT_SECRET', 'super_secret_key_change_me_in_production');
+    // Generar access token de 7 días y refresh token de 30 días
+    const token = this.jwtService.sign(payload, { secret, expiresIn: '7d' });
+    const refreshToken = this.jwtService.sign({ sub: user.id }, { secret, expiresIn: '30d' });
 
     return {
       token,

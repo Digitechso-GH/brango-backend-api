@@ -118,9 +118,9 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR, ROLES.SYS_DRIVER)
   async findToday(@Request() req: any, @Query('driverId') driverId?: string) {
-    // Si es chofer, forzamos su propio ID. Si es Admin/Dispatcher y envían driverId, filtramos por él. Si no, devolvemos todos.
+    // Si es chofer, forzamos su propio ID (driverId o sub). Si es Admin/Dispatcher y envían driverId, filtramos por él.
     const isDriver = req.user.role === ROLES.SYS_DRIVER;
-    const targetDriverId = isDriver ? req.user.sub : driverId;
+    const targetDriverId = isDriver ? (req.user.driverId || req.user.sub) : driverId;
     return this.ordersService.findToday(targetDriverId);
   }
   @Get('duplicates-suggestions')
