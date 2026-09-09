@@ -2,7 +2,10 @@
 function parseExcelDueDate(val: any): Date | null {
   if (!val) return null;
   if (val instanceof Date && !isNaN(val.getTime())) {
-    return getLimaDayjs(val).toDate();
+    const year = val.getUTCFullYear();
+    const month = val.getUTCMonth();
+    const day = val.getUTCDate();
+    return dayjs().tz(TIMEZONE).year(year).month(month).date(day).endOf('day').toDate();
   }
   const str = String(val).trim();
   if (!str) return null;
@@ -12,13 +15,16 @@ function parseExcelDueDate(val: any): Date | null {
     const day = parseInt(dmy[1], 10);
     const month = parseInt(dmy[2], 10) - 1;
     const year = parseInt(dmy[3], 10);
-    const hour = dmy[4] ? parseInt(dmy[4], 10) : 23;
-    const min = dmy[5] ? parseInt(dmy[5], 10) : 59;
-    return dayjs().tz(TIMEZONE).year(year).month(month).date(day).hour(hour).minute(min).second(59).millisecond(0).toDate();
+    if (dmy[4]) {
+      const hour = parseInt(dmy[4], 10);
+      const min = parseInt(dmy[5] || '0', 10);
+      return dayjs().tz(TIMEZONE).year(year).month(month).date(day).hour(hour).minute(min).second(59).millisecond(0).toDate();
+    }
+    return dayjs().tz(TIMEZONE).year(year).month(month).date(day).endOf('day').toDate();
   }
   const parsed = dayjs(str).tz(TIMEZONE);
   if (parsed.isValid()) {
-    return parsed.toDate();
+    return parsed.endOf('day').toDate();
   }
   return null;
 }

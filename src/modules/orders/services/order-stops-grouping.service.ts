@@ -60,10 +60,7 @@ export class OrderStopsGroupingService {
   }
 
   async normalizeDriverSequence(tx: any, driverId: string, date: Date) {
-    const startOfDay = new Date(date);
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setUTCHours(23, 59, 59, 999);
+    const { startOfDay, endOfDay } = getLimaDayRange(date);
 
     const activeAssignments = await tx.routeAssignment.findMany({
       where: {
@@ -237,8 +234,8 @@ export class OrderStopsGroupingService {
         if (a.routeId !== b.routeId) continue;
 
         // Deben ser para la misma fecha programada de entrega
-        const dateA = new Date(a.date).toISOString().slice(0, 10);
-        const dateB = new Date(b.date).toISOString().slice(0, 10);
+        const dateA = getLimaDayjs(a.date).format('YYYY-MM-DD');
+        const dateB = getLimaDayjs(b.date).format('YYYY-MM-DD');
         if (dateA !== dateB) continue;
 
         const isMatch = this.isSamePhysicalLocation(
@@ -305,8 +302,8 @@ export class OrderStopsGroupingService {
       throw new BadRequestException('Solo se pueden agrupar pedidos asignados al mismo conductor');
     }
 
-    const firstDate = assignments[0].date.toISOString().split('T')[0];
-    const differentDate = assignments.some((a) => a.date.toISOString().split('T')[0] !== firstDate);
+    const firstDate = getLimaDayjs(assignments[0].date).format('YYYY-MM-DD');
+    const differentDate = assignments.some((a) => getLimaDayjs(a.date).format('YYYY-MM-DD') !== firstDate);
     if (differentDate) {
       throw new BadRequestException('Todos los pedidos a consolidar deben pertenecer a la misma fecha');
     }

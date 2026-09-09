@@ -974,9 +974,8 @@ export class OrdersService {
       throw new BadRequestException('Solo se pueden reasignar asignaciones en estado OBSERVED');
     }
 
-    // Usamos dayjs.tz para que startOfDay coincida exactamente con la medianoche de Lima (05:00 UTC)
-    const dateStr = dto.date.split('T')[0];
-    const { startOfDay, endOfDay } = getLimaDayRange(dateStr);
+    // Usamos getLimaDayRange directamente para anclar a la medianoche de Lima (05:00 UTC)
+    const { startOfDay, endOfDay } = getLimaDayRange(dto.date);
 
     const maxSeq = await this.prisma.routeAssignment.aggregate({
       where: {
