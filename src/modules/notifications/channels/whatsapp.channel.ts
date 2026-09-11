@@ -1,21 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AssignmentStatus } from '@prisma/client';
 import { calculateRouteETA } from '../../orders/helpers/geocoding.helper';
+import {
+  WHATSAPP_TEMPLATES,
+  MetaTemplateComponent,
+  normalizePeruvianPhoneNumber,
+  formatOrderCodesSummary,
+  buildAdminTransitAlertComponents,
+  buildCustomerTransitComponents,
+  buildWarehouseTransitComponents,
+  buildAdminCompletionComponents,
+} from '../templates/whatsapp-templates.builder';
 
 const HEADER_IMAGE_POOL = [
-  'https://brango.syncrodg.com/logo.png'
+  'https://brango.syncrodg.com/logo.png',
 ];
-
-function formatOrderCodesSummary(codes: string[]): string {
-  if (codes.length === 0) return '';
-  if (codes.length === 1) return codes[0];
-  if (codes.length === 2) return `${codes[0]} y ${codes[1]}`;
-  if (codes.length === 3) return `${codes[0]}, ${codes[1]} y ${codes[2]}`;
-  
-  const remaining = codes.length - 2;
-  return `${codes[0]}, ${codes[1]} y ${remaining} más`;
-}
 
 @Injectable()
 export class WhatsappChannel {
@@ -25,10 +24,10 @@ export class WhatsappChannel {
 
   async sendTransitNotification(assignment: any, siblings: any[] = []) {
     this.logger.log(`[WhatsApp] Intentando envío real de notificación IN_TRANSIT a Meta para asignación ${assignment?.id} (hermanos: ${siblings?.length || 0})...`);
-    
+
     const token = process.env.WHATSAPP_TOKEN;
     const phoneId = process.env.WHATSAPP_PHONE_ID || process.env.WHATSAPP_PHONE_NUMBER_ID;
-    
+
     if (!token || !phoneId) {
       this.logger.error(`[WhatsApp] Faltan credenciales de Meta (WHATSAPP_TOKEN o WHATSAPP_PHONE_ID / WHATSAPP_PHONE_NUMBER_ID). Abortando envío para asignación ${assignment?.id}.`);
       return;
@@ -36,12 +35,7 @@ export class WhatsappChannel {
 
     // Leer número admin de la base de datos o de variable de entorno (fallback)
     const config = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_admin_phone' } });
-    let adminPhone = config?.value || process.env.WHATSAPP_ADMIN_PHONE;
-    
-    if (adminPhone) {
-      adminPhone = adminPhone.replace(/\D/g, '');
-      if (adminPhone.length === 9) adminPhone = '51' + adminPhone;
-    }
+    const adminPhone = normalizePeruvianPhoneNumber(config?.value || process.env.WHATSAPP_ADMIN_PHONE);
 
     try {
       // 1. Obtener todas las asignaciones completas de la parada (principal + hermanos)
@@ -51,6 +45,7 @@ export class WhatsappChannel {
         include: {
           order: { include: { customer: true, originBranch: true } },
           driver: { include: { user: true } },
+          vehicle: true,
         },
         orderBy: { sequenceIndex: 'asc' },
       });
@@ -59,6 +54,8 @@ export class WhatsappChannel {
 
       const first = fullAssignments[0];
       const driverName = first.driver?.user?.name || 'Nuestro chofer';
+      const driverUnit = first.driver?.unit || first.vehicle?.plate || '';
+      const driverWithUnit = driverUnit ? `${driverName} (${driverUnit})` : driverName;
 
       // 2. Disparo al Administrador (Aislado para no bloquear el envío al cliente)
       if (adminPhone) {
@@ -70,17 +67,19 @@ export class WhatsappChannel {
             new Set(fullAssignments.map((fa) => fa.order.customer?.name || fa.order.recipientName || 'nuestro cliente'))
           ).join(' / ');
 
-          const adminComponents = [
-            {
-              type: 'body',
-              parameters: [
-                { type: 'text', parameter_name: 'driver_name', text: driverName },
-                { type: 'text', parameter_name: 'order_id', text: adminOrderCodeText },
-                { type: 'text', parameter_name: 'customer_name', text: distinctCustomerNames }
-              ]
-            }
-          ];
-          await this.sendTemplateWithLangFallback(token, phoneId, adminPhone, 'admin_order_alert', adminComponents);
+          const adminComponents = buildAdminTransitAlertComponents({
+            driverName,
+            orderCodesSummary: adminOrderCodeText,
+            customerNamesSummary: distinctCustomerNames,
+          });
+
+          await this.sendTemplateWithLangFallback(
+            token,
+            phoneId,
+            adminPhone,
+            WHATSAPP_TEMPLATES.ADMIN_ORDER_ALERT,
+            adminComponents
+          );
           this.logger.log(`[WhatsApp] Alerta de administrador enviada exitosamente a ${adminPhone}`);
         } catch (adminErr: any) {
           this.logger.warn(`[WhatsApp] No se pudo enviar alerta al admin (${adminPhone}): ${adminErr.message}. Continuando con clientes.`);
@@ -89,7 +88,7 @@ export class WhatsappChannel {
         this.logger.warn(`[WhatsApp] whatsapp_admin_phone no configurado. Continuando con notificación al cliente.`);
       }
 
-      // 3. Disparo al Cliente (Agrupación ESTRICTA únicamente por customerId)
+      // 3. Obtener Logo y ETA común para la parada
       const logoConfig = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_logo_url' } });
       const finalImage = logoConfig?.value || HEADER_IMAGE_POOL[0];
 
@@ -100,12 +99,7 @@ export class WhatsappChannel {
       const destLng = first.order?.longitude;
 
       if (originLat && originLng && destLat && destLng) {
-        const dynamicEta = await calculateRouteETA(
-          originLat,
-          originLng,
-          destLat,
-          destLng
-        );
+        const dynamicEta = await calculateRouteETA(originLat, originLng, destLat, destLng);
         if (dynamicEta) {
           etaText = dynamicEta;
           this.logger.log(`[WhatsApp] ETA en tiempo real calculado por Google Maps para pedido ${first.order?.code}: ${etaText}`);
@@ -116,7 +110,7 @@ export class WhatsappChannel {
         this.logger.warn(`[WhatsApp] Coordenadas insuficientes para calcular ETA (origin: ${originLat},${originLng} | dest: ${destLat},${destLng}). Usando fallback: ${etaText}`);
       }
 
-      // Agrupar asignaciones estrictamente por customerId
+      // 4. Disparo al Cliente (Agrupación ESTRICTA únicamente por customerId)
       const customerBatches = new Map<string, typeof fullAssignments>();
       const unassignedCustomerAssignments: typeof fullAssignments = [];
 
@@ -138,19 +132,14 @@ export class WhatsappChannel {
 
       for (const groupItems of clientDeliveryGroups) {
         const leadItem = groupItems[0];
-        if (!leadItem.order.recipientPhone) {
-          this.logger.warn(`[WhatsApp] Pedido ${leadItem.order.code} sin teléfono de destinatario. Se omite envío.`);
+        const customerPhone = normalizePeruvianPhoneNumber(leadItem.order.recipientPhone);
+        if (!customerPhone) {
+          this.logger.warn(`[WhatsApp] Pedido ${leadItem.order.code} sin teléfono válido de destinatario. Se omite envío al cliente.`);
           continue;
-        }
-
-        let customerPhone = leadItem.order.recipientPhone.replace(/\D/g, '');
-        if (customerPhone.length === 9) {
-          customerPhone = '51' + customerPhone;
         }
 
         const groupCodes = groupItems.map((gi) => gi.order.code || gi.order.id.slice(0, 8));
         const clientOrderCodeText = formatOrderCodesSummary(groupCodes);
-
         const trackingToken = leadItem.order.publicTrackingToken || leadItem.order.code;
 
         if (process.env.NODE_ENV !== 'production') {
@@ -158,40 +147,24 @@ export class WhatsappChannel {
           this.logger.log(`🔗 [DEV TRACKING URL]: ${appUrl}/seguimiento/${trackingToken}`);
         }
 
-        const clientComponents = [
-          {
-            type: 'header',
-            parameters: [
-              {
-                type: 'image',
-                image: { link: finalImage }
-              }
-            ]
-          },
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', parameter_name: 'store_name', text: 'BranGo' },
-              { type: 'text', parameter_name: 'order_id', text: clientOrderCodeText },
-              { type: 'text', parameter_name: 'eta', text: etaText }
-            ]
-          },
-          {
-            type: 'button',
-            sub_type: 'url',
-            index: '0',
-            parameters: [
-              {
-                type: 'text',
-                text: trackingToken
-              }
-            ]
-          }
-        ];
+        const clientComponents = buildCustomerTransitComponents({
+          storeName: 'BranGo',
+          orderCodesSummary: clientOrderCodeText,
+          etaText,
+          trackingToken,
+          headerImageUrl: finalImage,
+        });
 
         try {
-          await this.sendTemplateWithLangFallback(token, phoneId, customerPhone, 'order_in_transit', clientComponents, true);
-          
+          await this.sendTemplateWithLangFallback(
+            token,
+            phoneId,
+            customerPhone,
+            WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT,
+            clientComponents,
+            true
+          );
+
           this.logger.log(`[WhatsApp] Mensaje de tránsito enviado exitosamente a cliente ${customerPhone} para pedido(s) ${clientOrderCodeText}`);
 
           for (const item of groupItems) {
@@ -200,24 +173,121 @@ export class WhatsappChannel {
                 routeAssignmentId: item.id,
                 type: 'WHATSAPP_NOTIFICATION_SENT',
                 actor: 'system',
-                metadata: { phone: customerPhone, template: 'order_in_transit' },
+                metadata: {
+                  phone: customerPhone,
+                  template: WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT,
+                  recipientType: 'customer',
+                },
               },
             });
           }
         } catch (clientErr: any) {
           this.logger.error(`[WhatsApp] Error enviando a cliente ${customerPhone}: ${clientErr.message}`);
-          
+
           for (const item of groupItems) {
             await this.prisma.orderEvent.create({
               data: {
                 routeAssignmentId: item.id,
                 type: 'WHATSAPP_NOTIFICATION_FAILED',
                 actor: 'system',
-                metadata: { error: clientErr.message, phone: customerPhone },
+                metadata: {
+                  error: clientErr.message,
+                  phone: customerPhone,
+                  recipientType: 'customer',
+                },
               },
             });
           }
         }
+      }
+
+      // 5. Disparo al Contacto de Almacén (Agrupación por teléfono de warehouseContact si existe)
+      // ⚠️ BANDERA DE ACTIVACIÓN:
+      // Cambiar a true (o definir ENABLE_WAREHOUSE_NOTIFICATIONS=true en .env) una vez creada y aprobada
+      // la plantilla 'order_in_transit_warehouse' en Meta Business Manager.
+      // Mientras sea false, no ejecutará la llamada a Meta ni generará eventos de error en la línea de tiempo.
+      const IS_WAREHOUSE_TEMPLATE_ACTIVE = process.env.ENABLE_WAREHOUSE_NOTIFICATIONS === 'true' || false;
+
+      if (!IS_WAREHOUSE_TEMPLATE_ACTIVE) {
+        this.logger.log(
+          `[WhatsApp] Notificación a almacén en espera: la plantilla '${WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT_WAREHOUSE}' aún no está activa en Meta. Se omite para no ensuciar la línea de tiempo.`
+        );
+      } else {
+      const warehouseBatches = new Map<string, typeof fullAssignments>();
+      for (const fa of fullAssignments) {
+        const warehousePhone = normalizePeruvianPhoneNumber(fa.order.warehouseContact);
+        if (warehousePhone) {
+          if (!warehouseBatches.has(warehousePhone)) {
+            warehouseBatches.set(warehousePhone, []);
+          }
+          warehouseBatches.get(warehousePhone)!.push(fa);
+        }
+      }
+
+      for (const [warehousePhone, whGroupItems] of warehouseBatches.entries()) {
+        const leadItem = whGroupItems[0];
+        const warehouseCodesWithWaybill = whGroupItems
+          .map((gi) => {
+            const code = gi.order.code || gi.order.id.slice(0, 8);
+            return gi.order.waybill ? `${code} (GR: ${gi.order.waybill})` : code;
+          })
+          .join(', ');
+
+        const trackingToken = leadItem.order.publicTrackingToken || leadItem.order.code;
+        const warehouseOrClientName = leadItem.order.customer?.name || leadItem.order.recipientName || 'Almacén';
+
+        const warehouseComponents = buildWarehouseTransitComponents({
+          warehouseOrClientName,
+          orderCodesWithWaybill: warehouseCodesWithWaybill,
+          driverWithUnit,
+          etaText,
+          trackingToken,
+          headerImageUrl: finalImage,
+        });
+
+        try {
+          await this.sendTemplateWithLangFallback(
+            token,
+            phoneId,
+            warehousePhone,
+            WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT_WAREHOUSE,
+            warehouseComponents,
+            true
+          );
+
+          this.logger.log(`[WhatsApp] Notificación de tránsito enviada exitosamente a almacén ${warehousePhone} para pedido(s) ${warehouseCodesWithWaybill}`);
+
+          for (const item of whGroupItems) {
+            await this.prisma.orderEvent.create({
+              data: {
+                routeAssignmentId: item.id,
+                type: 'WHATSAPP_WAREHOUSE_NOTIFICATION_SENT',
+                actor: 'system',
+                metadata: {
+                  phone: warehousePhone,
+                  template: WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT_WAREHOUSE,
+                },
+              },
+            });
+          }
+        } catch (whErr: any) {
+          this.logger.warn(`[WhatsApp] Fallo al enviar notificación a contacto de almacén ${warehousePhone} (plantilla '${WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT_WAREHOUSE}'): ${whErr.message}`);
+
+          for (const item of whGroupItems) {
+            await this.prisma.orderEvent.create({
+              data: {
+                routeAssignmentId: item.id,
+                type: 'WHATSAPP_WAREHOUSE_NOTIFICATION_FAILED',
+                actor: 'system',
+                metadata: {
+                  error: whErr.message,
+                  phone: warehousePhone,
+                },
+              },
+            });
+          }
+        }
+      }
       }
 
     } catch (error: any) {
@@ -227,18 +297,13 @@ export class WhatsappChannel {
 
   async sendCompletionNotification(assignment: any) {
     this.logger.log(`[WhatsApp] Intentando envío de notificación COMPLETED a Meta para asignación ${assignment.id}...`);
-    
+
     const token = process.env.WHATSAPP_TOKEN;
     const phoneId = process.env.WHATSAPP_PHONE_ID || process.env.WHATSAPP_PHONE_NUMBER_ID;
-    
+
     // Leer número admin de la base de datos o env fallback
     const config = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_admin_phone' } });
-    let adminPhone = config?.value || process.env.WHATSAPP_ADMIN_PHONE;
-
-    if (adminPhone) {
-      adminPhone = adminPhone.replace(/\D/g, '');
-      if (adminPhone.length === 9) adminPhone = '51' + adminPhone;
-    }
+    const adminPhone = normalizePeruvianPhoneNumber(config?.value || process.env.WHATSAPP_ADMIN_PHONE);
 
     if (!token || !phoneId || !adminPhone) {
       this.logger.warn(`[WhatsApp] Faltan credenciales o whatsapp_admin_phone. Omitiendo notificación COMPLETED para ${assignment.id}.`);
@@ -265,27 +330,20 @@ export class WhatsappChannel {
         if (logoConfig?.value) finalImage = logoConfig.value;
       }
 
-      const components = [
-        {
-          type: 'header',
-          parameters: [
-            {
-              type: 'image',
-              image: { link: finalImage }
-            }
-          ]
-        },
-        {
-          type: 'body',
-          parameters: [
-            { type: 'text', parameter_name: 'order_id', text: orderCode },
-            { type: 'text', parameter_name: 'status', text: statusStr },
-            { type: 'text', parameter_name: 'driver_name', text: driverName }
-          ]
-        }
-      ];
+      const components = buildAdminCompletionComponents({
+        orderCode,
+        statusText: statusStr,
+        driverName,
+        headerImageUrl: finalImage,
+      });
 
-      await this.sendTemplateWithLangFallback(token, phoneId, adminPhone, 'admin_order_completed', components);
+      await this.sendTemplateWithLangFallback(
+        token,
+        phoneId,
+        adminPhone,
+        WHATSAPP_TEMPLATES.ADMIN_ORDER_COMPLETED,
+        components
+      );
       this.logger.log(`[WhatsApp] Notificación COMPLETED enviada exitosamente para ${assignment.id}`);
     } catch (error: any) {
       this.logger.error(`[WhatsApp] Fallo contra Meta (COMPLETED) para ${assignment.id}: ${error.message}`);
@@ -298,7 +356,7 @@ export class WhatsappChannel {
     phoneId: string,
     toPhone: string,
     templateName: string,
-    components: any[] = [],
+    components: MetaTemplateComponent[] = [],
     allowWithoutButtons = false
   ) {
     const langCodes = ['es_PE', 'es_LA', 'es'];
@@ -311,7 +369,7 @@ export class WhatsappChannel {
       } catch (err: any) {
         lastError = err;
         const msg = err.message || '';
-        
+
         // Si el error es por idioma no soportado de la plantilla, probar siguiente idioma
         if (msg.includes('does not exist') || msg.includes('132001') || msg.includes('132000')) {
           this.logger.warn(`[WhatsApp] Plantilla '${templateName}' no existe en idioma '${lang}'. Probando siguiente variante...`);
@@ -319,10 +377,10 @@ export class WhatsappChannel {
         }
 
         // Si falló por estructura de botón y allowWithoutButtons está activo
-        if (allowWithoutButtons && components.some((c: any) => c.type === 'button')) {
+        if (allowWithoutButtons && components.some((c) => c.type === 'button')) {
           this.logger.warn(`[WhatsApp] Reintentando plantilla '${templateName}' (${lang}) sin botón interactivo para ${toPhone}...`);
           try {
-            const noBtnComponents = components.filter((c: any) => c.type !== 'button');
+            const noBtnComponents = components.filter((c) => c.type !== 'button');
             await this.sendTemplateToMeta(token, phoneId, toPhone, templateName, lang, noBtnComponents);
             return;
           } catch (btnErr: any) {
@@ -337,15 +395,22 @@ export class WhatsappChannel {
   }
 
   // Método privado para realizar la petición HTTP contra Meta Graph API
-  private async sendTemplateToMeta(token: string, phoneId: string, toPhone: string, templateName: string, langCode: string, components: any[] = []) {
+  private async sendTemplateToMeta(
+    token: string,
+    phoneId: string,
+    toPhone: string,
+    templateName: string,
+    langCode: string,
+    components: MetaTemplateComponent[] = []
+  ) {
     const payload: any = {
       messaging_product: 'whatsapp',
       to: toPhone,
       type: 'template',
-      template: { 
-        name: templateName, 
-        language: { code: langCode }
-      }
+      template: {
+        name: templateName,
+        language: { code: langCode },
+      },
     };
 
     if (components.length > 0) {
@@ -355,10 +420,10 @@ export class WhatsappChannel {
     const response = await fetch(`https://graph.facebook.com/v17.0/${phoneId}/messages`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
