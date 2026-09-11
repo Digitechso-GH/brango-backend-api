@@ -9,6 +9,7 @@ import { GroupStopsDto } from '../dto/group-stops.dto';
 import { UngroupStopDto } from '../dto/ungroup-stop.dto';
 import { GroupEvidenceDto } from '../dto/group-evidence.dto';
 import { AssignmentStatus, RouteStatus } from '@prisma/client';
+import { ORDER_EVENT_TYPES } from '../constants/order-events.constants';
 import { getLimaDayjs, getLimaDayRange } from '../../../core/utils/date.util';
 import { randomUUID } from 'crypto';
 
@@ -353,7 +354,7 @@ export class OrderStopsGroupingService {
         await tx.orderEvent.create({
           data: {
             routeAssignmentId: a.id,
-            type: 'STOP_GROUPED',
+            type: ORDER_EVENT_TYPES.STOP_GROUPED,
             actor: userId || 'system',
             metadata: {
               stopGroupId: targetStopGroupId,
@@ -427,7 +428,7 @@ export class OrderStopsGroupingService {
       await tx.orderEvent.create({
         data: {
           routeAssignmentId: assignment.id,
-          type: 'STOP_UNGROUPED',
+          type: ORDER_EVENT_TYPES.STOP_UNGROUPED,
           actor: userId || 'system',
           metadata: {
             previousStopGroupId: oldStopGroupId,

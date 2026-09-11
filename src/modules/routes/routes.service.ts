@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRouteDto, GetRoutesQueryDto } from './routes.dto';
 import { RouteStatus, AssignmentStatus } from '@prisma/client';
+import { ORDER_EVENT_TYPES } from '../orders/constants/order-events.constants';
 import { getLimaDayRange } from '../../core/utils/date.util';
 import { TrackingGateway } from '../tracking/tracking.gateway';
 
@@ -269,7 +270,7 @@ export class RoutesService {
         await tx.orderEvent.create({
           data: {
             routeAssignmentId: assignment.id,
-            type: 'DRIVER_UNASSIGNED',
+            type: ORDER_EVENT_TYPES.DRIVER_UNASSIGNED,
             actor,
             metadata: { note: 'Ruta cancelada por operador' },
           },
@@ -398,7 +399,7 @@ export class RoutesService {
         await tx.orderEvent.create({
           data: {
             routeAssignmentId: assignment.id,
-            type: 'FORCE_CLOSED_BY_ADMIN',
+            type: ORDER_EVENT_TYPES.FORCE_CLOSED_BY_ADMIN,
             actor,
             metadata: {
               note: reason || 'Cierre forzado por administrador por contingencia del chofer',

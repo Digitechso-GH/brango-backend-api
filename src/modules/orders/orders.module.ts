@@ -8,6 +8,9 @@ import { OrdersExcelParserService } from './services/orders-excel-parser.service
 import { OrdersImportService } from './services/orders-import.service';
 import { OrderStopsGroupingService } from './services/order-stops-grouping.service';
 import { OrderPausesService } from './services/order-pauses.service';
+import { OrdersQueryService } from './services/orders-query.service';
+import { OrdersLifecycleService } from './services/orders-lifecycle.service';
+import { OrdersStatusService } from './services/orders-status.service';
 import { StorageModule } from '../storage/storage.module';
 import { AuthModule } from '../auth/auth.module';
 import { OrdersPublicController } from './orders.public.controller';
@@ -17,6 +20,9 @@ import { OrdersPublicController } from './orders.public.controller';
   controllers: [OrdersController, OrdersPublicController],
   providers: [
     OrdersService,
+    OrdersQueryService,
+    OrdersLifecycleService,
+    OrdersStatusService,
     GeocodingService,
     OrdersClientResolverService,
     OrdersExcelParserService,
@@ -26,6 +32,9 @@ import { OrdersPublicController } from './orders.public.controller';
   ],
   exports: [
     OrdersService,
+    OrdersQueryService,
+    OrdersLifecycleService,
+    OrdersStatusService,
     GeocodingService,
     OrdersClientResolverService,
     OrdersExcelParserService,

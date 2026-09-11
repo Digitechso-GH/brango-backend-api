@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ORDER_EVENT_TYPES } from '../../orders/constants/order-events.constants';
 import { calculateRouteETA } from '../../orders/helpers/geocoding.helper';
 import {
   WHATSAPP_TEMPLATES,
@@ -171,7 +172,7 @@ export class WhatsappChannel {
             await this.prisma.orderEvent.create({
               data: {
                 routeAssignmentId: item.id,
-                type: 'WHATSAPP_NOTIFICATION_SENT',
+                type: ORDER_EVENT_TYPES.WHATSAPP_SENT,
                 actor: 'system',
                 metadata: {
                   phone: customerPhone,
@@ -188,7 +189,7 @@ export class WhatsappChannel {
             await this.prisma.orderEvent.create({
               data: {
                 routeAssignmentId: item.id,
-                type: 'WHATSAPP_NOTIFICATION_FAILED',
+                type: ORDER_EVENT_TYPES.WHATSAPP_FAILED,
                 actor: 'system',
                 metadata: {
                   error: clientErr.message,
@@ -261,7 +262,7 @@ export class WhatsappChannel {
             await this.prisma.orderEvent.create({
               data: {
                 routeAssignmentId: item.id,
-                type: 'WHATSAPP_WAREHOUSE_NOTIFICATION_SENT',
+                type: ORDER_EVENT_TYPES.WHATSAPP_WAREHOUSE_SENT,
                 actor: 'system',
                 metadata: {
                   phone: warehousePhone,
@@ -277,7 +278,7 @@ export class WhatsappChannel {
             await this.prisma.orderEvent.create({
               data: {
                 routeAssignmentId: item.id,
-                type: 'WHATSAPP_WAREHOUSE_NOTIFICATION_FAILED',
+                type: ORDER_EVENT_TYPES.WHATSAPP_WAREHOUSE_FAILED,
                 actor: 'system',
                 metadata: {
                   error: whErr.message,

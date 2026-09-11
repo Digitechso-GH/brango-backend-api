@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersService } from '../orders.service';
+import { OrdersQueryService } from '../services/orders-query.service';
+import { OrdersLifecycleService } from '../services/orders-lifecycle.service';
+import { OrdersStatusService } from '../services/orders-status.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrackingGateway } from '../../tracking/tracking.gateway';
 import { GeocodingService } from '../services/geocoding.service';
@@ -45,6 +48,9 @@ describe('OrdersService - importExcel E2E integration test', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrdersService,
+        OrdersQueryService,
+        OrdersLifecycleService,
+        OrdersStatusService,
         OrdersImportService,
         { provide: PrismaService, useValue: prismaService },
         { provide: OrdersExcelParserService, useValue: excelParserService },

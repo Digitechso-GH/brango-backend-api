@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersService } from '../orders.service';
+import { OrdersQueryService } from '../services/orders-query.service';
+import { OrdersLifecycleService } from '../services/orders-lifecycle.service';
+import { OrdersStatusService } from '../services/orders-status.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrackingGateway } from '../../tracking/tracking.gateway';
 import { GeocodingService } from '../services/geocoding.service';
@@ -42,6 +45,9 @@ describe('OrdersService Multi-Order Stops (Group Stops)', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrdersService,
+        OrdersQueryService,
+        OrdersLifecycleService,
+        OrdersStatusService,
         { provide: PrismaService, useValue: prismaService },
         { provide: TrackingGateway, useValue: trackingGateway },
         { provide: GeocodingService, useValue: {} },
@@ -67,7 +73,7 @@ describe('OrdersService Multi-Order Stops (Group Stops)', () => {
           status: AssignmentStatus.IN_TRANSIT,
           sequenceIndex: 1,
           route: { id: 'route-1', status: RouteStatus.IN_PROGRESS },
-          order: { id: 'order-1', code: '1001' },
+          order: { id: 'order-1', code: '1001', latitude: -12.04637, longitude: -77.04279 },
         },
         {
           id: 'assign-2',
@@ -76,7 +82,7 @@ describe('OrdersService Multi-Order Stops (Group Stops)', () => {
           status: AssignmentStatus.PENDING,
           sequenceIndex: 2,
           route: { id: 'route-1', status: RouteStatus.IN_PROGRESS },
-          order: { id: 'order-2', code: '1002' },
+          order: { id: 'order-2', code: '1002', latitude: -12.04637, longitude: -77.04279 },
         },
       ]);
 
@@ -95,7 +101,7 @@ describe('OrdersService Multi-Order Stops (Group Stops)', () => {
           status: AssignmentStatus.PENDING,
           sequenceIndex: 1,
           route: { id: 'route-1', status: RouteStatus.PENDING },
-          order: { id: 'order-1', code: '1001' },
+          order: { id: 'order-1', code: '1001', latitude: -12.04637, longitude: -77.04279 },
         },
         {
           id: 'assign-2',
@@ -104,7 +110,7 @@ describe('OrdersService Multi-Order Stops (Group Stops)', () => {
           status: AssignmentStatus.PENDING,
           sequenceIndex: 2,
           route: { id: 'route-1', status: RouteStatus.PENDING },
-          order: { id: 'order-2', code: '1002' },
+          order: { id: 'order-2', code: '1002', latitude: -12.04637, longitude: -77.04279 },
         },
       ]);
 
