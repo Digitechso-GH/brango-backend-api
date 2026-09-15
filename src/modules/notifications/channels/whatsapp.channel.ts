@@ -149,7 +149,7 @@ export class WhatsappChannel {
         }
 
         const clientComponents = buildCustomerTransitComponents({
-          storeName: 'BranGo',
+          storeName: leadItem.order.customer?.name || leadItem.order.recipientName || 'BranGo',
           orderCodesSummary: clientOrderCodeText,
           etaText,
           trackingToken,
