@@ -199,7 +199,7 @@ export class OrdersExcelParserService {
       Array.from(addressesToGeocodeSet),
     );
 
-    return rawParsedRows.map((item) => {
+    const finalMappedRows = rawParsedRows.map((item) => {
       const geo = geocodeCacheMap.get(item.rawAddress) || { lat: null, lng: null, status: 'FAILED' };
       return {
         ...item,
@@ -209,5 +209,21 @@ export class OrdersExcelParserService {
         dueDate: item.dueDate || null,
       };
     });
+
+    const geocodingErrors = finalMappedRows.filter(row => row.geocodingStatus === 'FAILED' || !row.latitude);
+    if (geocodingErrors.length > 0) {
+      for (const errRow of geocodingErrors) {
+        errors.push({
+          fila: errRow.rowNumber,
+          error: `No se pudo obtener la latitud/longitud de este enlace de Google Maps. Por favor, revise que el enlace sea válido.`
+        });
+      }
+      throw new BadRequestException({
+        message: 'El archivo Excel contiene enlaces de Google Maps inválidos',
+        errors,
+      });
+    }
+
+    return finalMappedRows;
   }
 }

@@ -65,6 +65,10 @@ export class OrdersLifecycleService {
     const cleanAddress = this.geocodingService.extractAddressFromUrl(dto.rawAddress);
     const geo = await this.geocodingService.resolveGeocodingFromUrl(cleanAddress, dto.latitude, dto.longitude);
 
+    if (!geo.lat || geo.status === 'FAILED') {
+      throw new BadRequestException('No se pudo obtener la latitud/longitud de este enlace de Google Maps. Por favor, revise que el enlace sea válido.');
+    }
+
     let finalFormatted = dto.formattedAddress;
     if (!finalFormatted || finalFormatted.startsWith('http')) {
       finalFormatted = cleanAddress && !cleanAddress.startsWith('http') ? cleanAddress : undefined;
