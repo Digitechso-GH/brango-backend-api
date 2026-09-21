@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -63,7 +63,10 @@ export class OrdersLifecycleService {
     }
 
     const cleanAddress = this.geocodingService.extractAddressFromUrl(dto.rawAddress);
-    const geo = await this.geocodingService.resolveGeocodingFromUrl(cleanAddress, dto.latitude, dto.longitude);
+    const isUrl = dto.rawAddress.startsWith('http') || dto.rawAddress.includes('maps') || dto.rawAddress.includes('goo.gl');
+    const inputLat = isUrl ? undefined : dto.latitude;
+    const inputLng = isUrl ? undefined : dto.longitude;
+    const geo = await this.geocodingService.resolveGeocodingFromUrl(cleanAddress, inputLat, inputLng);
 
     if (!geo.lat || geo.status === 'FAILED') {
       throw new BadRequestException('No se pudo obtener la latitud/longitud de este enlace de Google Maps. Por favor, revise que el enlace sea válido.');
@@ -300,7 +303,10 @@ export class OrdersLifecycleService {
 
     if (dto.rawAddress !== undefined && dto.rawAddress !== null) {
       const cleanAddress = this.geocodingService.extractAddressFromUrl(dto.rawAddress);
-      const geo = await this.geocodingService.resolveGeocodingFromUrl(cleanAddress, dto.latitude, dto.longitude);
+      const isUrl = dto.rawAddress.startsWith('http') || dto.rawAddress.includes('maps') || dto.rawAddress.includes('goo.gl');
+      const inputLat = isUrl ? undefined : dto.latitude;
+      const inputLng = isUrl ? undefined : dto.longitude;
+      const geo = await this.geocodingService.resolveGeocodingFromUrl(cleanAddress, inputLat, inputLng);
       let finalFormatted = dto.formattedAddress;
       if (!finalFormatted || finalFormatted.startsWith('http')) {
         finalFormatted = cleanAddress && !cleanAddress.startsWith('http') ? cleanAddress : undefined;
