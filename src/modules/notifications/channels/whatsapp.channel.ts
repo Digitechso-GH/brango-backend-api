@@ -323,7 +323,7 @@ export class WhatsappChannel {
       const driverName = fullAssignment.driver?.user?.name || 'Nuestro chofer';
       const statusStr = fullAssignment.status === 'DELIVERED' ? 'ENTREGADO' : 'OBSERVADO';
 
-      let finalImage = 'https://brango.syncrodg.com/logo.png';
+      let finalImage = HEADER_IMAGE_POOL[0];
       if (fullAssignment.evidences && fullAssignment.evidences.length > 0) {
         finalImage = fullAssignment.evidences[fullAssignment.evidences.length - 1].s3Url;
       } else {
