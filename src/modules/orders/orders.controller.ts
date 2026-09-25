@@ -57,8 +57,13 @@ export class OrdersController {
     @Body('key') key?: string,
     @Body('contentType') contentType?: string,
   ) {
-    const finalKey = key || `evidence-${Date.now()}.jpg`;
-    const uploadUrl = await this.storageService.getUploadUrl(finalKey, contentType);
+    let finalKey = key || `evidence-${Date.now()}.jpeg`;
+    if (finalKey.endsWith('.jpg')) {
+      finalKey = finalKey.replace(/\.jpg$/, '.jpeg');
+    }
+    const finalContentType = contentType === 'image/jpg' ? 'image/jpeg' : contentType;
+    
+    const uploadUrl = await this.storageService.getUploadUrl(finalKey, finalContentType);
     const publicUrl = this.storageService.getPublicUrl(finalKey);
     return { uploadUrl, publicUrl, key: finalKey };
   }
