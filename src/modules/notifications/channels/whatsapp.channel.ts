@@ -75,6 +75,249 @@ export class WhatsappChannel {
           });
 
           await this.sendTemplateWithLangFallback(
+            token,
+            phoneId,
+            adminPhone,
+            WHATSAPP_TEMPLATES.ADMIN_ORDER_ALERT,
+            adminComponents
+          );
+          this.logger.log(`[WhatsApp] Alerta de administrador enviada exitosamente a ${adminPhone}`);
+        } catch (adminErr: any) {
+          this.logger.warn(`[WhatsApp] No se pudo enviar alerta al admin (${adminPhone}): ${adminErr.message}. Continuando con clientes.`);
+        }
+      } else {
+        this.logger.warn(`[WhatsApp] whatsapp_admin_phone no configurado. Continuando con notificación al cliente.`);
+      }
+
+      // 3. Obtener Logo y ETA común para la parada
+      const logoConfig = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_logo_url' } });
+      const finalImage = logoConfig?.value || HEADER_IMAGE_POOL[0];
+
+      let etaText = '30 a 60 minutos';
+      const originLat = first.originLatitude ?? first.order?.originBranch?.latitude;
+      const originLng = first.originLongitude ?? first.order?.originBranch?.longitude;
+      const destLat = first.order?.latitude;
+      const destLng = first.order?.longitude;
+
+      if (originLat && originLng && destLat && destLng) {
+        const dynamicEta = await calculateRouteETA(originLat, originLng, destLat, destLng);
+        if (dynamicEta) {
+          etaText = dynamicEta;
+          this.logger.log(`[WhatsApp] ETA en tiempo real calculado por Google Maps para pedido ${first.order?.code}: ${etaText}`);
+        } else {
+          this.logger.warn(`[WhatsApp] Google Maps no devolvió ETA para pedido ${first.order?.code}. Usando fallback: ${etaText}`);
+        }
+      } else {
+        this.logger.warn(`[WhatsApp] Coordenadas insuficientes para calcular ETA (origin: ${originLat},${originLng} | dest: ${destLat},${destLng}). Usando fallback: ${etaText}`);
+      }
+
+      // 4. Disparo al Cliente (Agrupación ESTRICTA únicamente por customerId)
+      const customerBatches = new Map<string, typeof fullAssignments>();
+      const unassignedCustomerAssignments: typeof fullAssignments = [];
+
+      for (const fa of fullAssignments) {
+        if (fa.order.customerId) {
+          if (!customerBatches.has(fa.order.customerId)) {
+            customerBatches.set(fa.order.customerId, []);
+          }
+          customerBatches.get(fa.order.customerId)!.push(fa);
+        } else {
+          unassignedCustomerAssignments.push(fa);
+        }
+      }
+
+      const clientDeliveryGroups: Array<typeof fullAssignments> = [
+        ...Array.from(customerBatches.values()),
+        ...unassignedCustomerAssignments.map((it) => [it]),
+      ];
+
+      for (const groupItems of clientDeliveryGroups) {
+        const leadItem = groupItems[0];
+        const customerPhone = normalizePeruvianPhoneNumber(leadItem.order.recipientPhone);
+        if (!customerPhone) {
+          this.logger.warn(`[WhatsApp] Pedido ${leadItem.order.code} sin teléfono válido de destinatario. Se omite envío al cliente.`);
+          continue;
+        }
+
+        const groupCodes = groupItems.map((gi) => gi.order.code || gi.order.id.slice(0, 8));
+        const clientOrderCodeText = formatOrderCodesSummary(groupCodes);
+        const trackingToken = leadItem.order.publicTrackingToken || leadItem.order.code;
+
+        if (process.env.NODE_ENV !== 'production') {
+          const appUrl = process.env.PUBLIC_APP_URL || 'http://localhost:3000';
+          this.logger.log(`🔗 [DEV TRACKING URL]: ${appUrl}/seguimiento/${trackingToken}`);
+        }
+
+        const clientComponents = buildCustomerTransitComponents({
+          storeName: leadItem.order.customer?.name || leadItem.order.recipientName || 'BranGo',
+          orderCodesSummary: clientOrderCodeText,
+          etaText,
+          trackingToken,
+          headerImageUrl: finalImage,
+        });
+
+        try {
+          await this.sendTemplateWithLangFallback(
+            token,
+            phoneId,
+            customerPhone,
+            WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT,
+            clientComponents,
+            true
+          );
+
+          this.logger.log(`[WhatsApp] Mensaje de tránsito enviado exitosamente a cliente ${customerPhone} para pedido(s) ${clientOrderCodeText}`);
+
+          for (const item of groupItems) {
+            await this.prisma.orderEvent.create({
+              data: {
+                routeAssignmentId: item.id,
+                type: ORDER_EVENT_TYPES.WHATSAPP_SENT,
+                actor: 'system',
+                metadata: {
+                  phone: customerPhone,
+                  template: WHATSAPP_TEMPLATES.ORDER_IN_TRANSIT,
+                  recipientType: 'customer',
+                },
+              },
+            });
+          }
+        } catch (clientErr: any) {
+          this.logger.error(`[WhatsApp] Error enviando a cliente ${customerPhone}: ${clientErr.message}`);
+
+          for (const item of groupItems) {
+            await this.prisma.orderEvent.create({
+              data: {
+                routeAssignmentId: item.id,
+                type: ORDER_EVENT_TYPES.WHATSAPP_FAILED,
+                actor: 'system',
+                metadata: {
+                  error: clientErr.message,
+                  phone: customerPhone,
+                  recipientType: 'customer',
+                },
+              },
+            });
+          }
+        }
+      }
+
+      // 5. Disparo al Contacto Comercial (antes almacén)
+      const commercialBatches = new Map<string, typeof fullAssignments>();
+      for (const fa of fullAssignments) {
+        const commercialPhone = normalizePeruvianPhoneNumber(fa.order.warehouseContact);
+        if (commercialPhone) {
+          if (!commercialBatches.has(commercialPhone)) {
+            commercialBatches.set(commercialPhone, []);
+          }
+          commercialBatches.get(commercialPhone)!.push(fa);
+        }
+      }
+
+      for (const [commercialPhone, commGroupItems] of commercialBatches.entries()) {
+        const allOrderCodes = commGroupItems.map((fa) => fa.order.code || fa.order.id.slice(0, 8));
+        const commOrderCodeText = formatOrderCodesSummary(allOrderCodes);
+
+        const distinctCustomerNames = Array.from(
+          new Set(commGroupItems.map((fa) => fa.order.customer?.name || fa.order.recipientName || 'nuestro cliente'))
+        ).join(' / ');
+
+        const commercialComponents = buildAdminTransitAlertComponents({
+          driverName,
+          orderCodesSummary: commOrderCodeText,
+          customerNamesSummary: distinctCustomerNames,
+        });
+
+        try {
+          await this.sendTemplateWithLangFallback(
+            token,
+            phoneId,
+            commercialPhone,
+            WHATSAPP_TEMPLATES.ADMIN_ORDER_ALERT,
+            commercialComponents
+          );
+
+          this.logger.log(`[WhatsApp] Notificación de tránsito enviada exitosamente a comercial ${commercialPhone} para pedido(s) ${commOrderCodeText}`);
+
+          for (const item of commGroupItems) {
+            await this.prisma.orderEvent.create({
+              data: {
+                routeAssignmentId: item.id,
+                type: ORDER_EVENT_TYPES.WHATSAPP_WAREHOUSE_SENT,
+                actor: 'system',
+                metadata: {
+                  phone: commercialPhone,
+                  template: WHATSAPP_TEMPLATES.ADMIN_ORDER_ALERT,
+                },
+              },
+            });
+          }
+        } catch (commErr: any) {
+          this.logger.warn(`[WhatsApp] Fallo al enviar notificación a contacto comercial ${commercialPhone}: ${commErr.message}`);
+
+          for (const item of commGroupItems) {
+            await this.prisma.orderEvent.create({
+              data: {
+                routeAssignmentId: item.id,
+                type: ORDER_EVENT_TYPES.WHATSAPP_WAREHOUSE_FAILED,
+                actor: 'system',
+                metadata: {
+                  error: commErr.message,
+                  phone: commercialPhone,
+                },
+              },
+            });
+          }
+        }
+      }
+    } catch (error: any) {
+      this.logger.error(`[WhatsApp] Fallo general en notificación IN_TRANSIT para parada ${assignment?.id}: ${error.message}`);
+    }
+  }
+
+  async sendCompletionNotification(assignment: any) {
+    this.logger.log(`[WhatsApp] Intentando envío de notificación COMPLETED a Meta para asignación ${assignment.id}...`);
+
+    const token = process.env.WHATSAPP_TOKEN;
+    const phoneId = process.env.WHATSAPP_PHONE_ID || process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+    // Leer número admin de la base de datos o env fallback
+    const config = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_admin_phone' } });
+    const adminPhone = normalizePeruvianPhoneNumber(config?.value || process.env.WHATSAPP_ADMIN_PHONE);
+
+    if (!token || !phoneId || !adminPhone) {
+      this.logger.warn(`[WhatsApp] Faltan credenciales o whatsapp_admin_phone. Omitiendo notificación COMPLETED para ${assignment.id}.`);
+      return;
+    }
+
+    try {
+      const fullAssignment = await this.prisma.routeAssignment.findUnique({
+        where: { id: assignment.id },
+        include: { order: true, driver: { include: { user: true } }, evidences: true },
+      });
+
+      if (!fullAssignment || !fullAssignment.order) return;
+
+      const orderCode = fullAssignment.order.code || fullAssignment.order.id.slice(0, 8);
+      const driverName = fullAssignment.driver?.user?.name || 'Nuestro chofer';
+      const statusStr = fullAssignment.status === 'DELIVERED' ? 'ENTREGADO' : 'OBSERVADO';
+
+      let finalImage = HEADER_IMAGE_POOL[0];
+      if (fullAssignment.evidences && fullAssignment.evidences.length > 0) {
+        finalImage = fullAssignment.evidences[fullAssignment.evidences.length - 1].s3Url;
+      } else {
+        const logoConfig = await this.prisma.systemConfig.findUnique({ where: { key: 'whatsapp_logo_url' } });
+        if (logoConfig?.value) finalImage = logoConfig.value;
+      }
+
+      const components = buildAdminCompletionComponents({
+        orderCode,
+        statusText: statusStr,
+        driverName,
+        headerImageUrl: finalImage,
+      });
+
+      await this.sendTemplateWithLangFallback(
         token,
         phoneId,
         adminPhone,
