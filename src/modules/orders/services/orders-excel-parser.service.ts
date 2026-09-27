@@ -142,6 +142,14 @@ export class OrdersExcelParserService {
         errors.push({ fila: rowNum, error: 'Falta nombre del cliente/destinatario' });
       }
 
+      if (phone && warehouseContact) {
+        const phoneDigits = phone.replace(/\D/g, '');
+        const warehouseDigits = warehouseContact.replace(/\D/g, '');
+        if (phoneDigits && warehouseDigits && phoneDigits === warehouseDigits) {
+          errors.push({ fila: rowNum, error: 'El contacto comercial no puede ser igual al contacto del cliente' });
+        }
+      }
+
       if (targetAddress) {
         addressesToGeocodeSet.add(targetAddress);
       }
