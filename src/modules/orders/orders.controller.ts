@@ -56,8 +56,18 @@ export class OrdersController {
   async getPresignedUrl(
     @Body('key') key?: string,
     @Body('contentType') contentType?: string,
+    @Body('folder') folder?: string,
   ) {
-    const finalKey = key || `evidence-${Date.now()}.jpg`;
+    let finalKey = key;
+    if (!finalKey || !finalKey.includes('/')) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const baseFolder = folder || 'evidence';
+      const fileName = key || `evidence-${Date.now()}.${contentType?.includes('png') ? 'png' : 'jpg'}`;
+      finalKey = `${baseFolder}/${year}/${month}/${day}/${fileName}`;
+    }
     const uploadUrl = await this.storageService.getUploadUrl(finalKey, contentType);
     const publicUrl = this.storageService.getPublicUrl(finalKey);
     return { uploadUrl, publicUrl, key: finalKey };
