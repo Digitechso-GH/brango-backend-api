@@ -1,6 +1,6 @@
-import { Controller, Post, Get, Patch, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Put, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { RoutesService } from './routes.service';
-import { CreateRouteDto, GetRoutesQueryDto } from './routes.dto';
+import { CreateRouteDto, GetRoutesQueryDto, UpdateRouteDto } from './routes.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -37,6 +37,19 @@ export class RoutesController {
   @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
   async getRouteDetail(@Param('id') id: string) {
     return this.routesService.findOne(id);
+  }
+
+  @Patch(':id')
+  @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
+  async updateRoute(
+    @Param('id') id: string,
+    @Body() dto: UpdateRouteDto,
+    @Request() req: any,
+  ) {
+    const actor = req.user?.name || req.user?.email || 'system';
+    return this.routesService.updateRoute(id, dto, actor);
   }
 
   @Patch(':id/cancel')

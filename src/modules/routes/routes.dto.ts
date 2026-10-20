@@ -32,10 +32,38 @@ export class CreateRouteDto {
   overviewPolyline?: string;
 }
 
+export class UpdateRouteDto {
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @IsUUID()
+  @IsOptional()
+  driverId?: string;
+
+  @IsString()
+  @IsOptional()
+  date?: string; // Formato YYYY-MM-DD
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => RouteAssignmentInput)
+  assignments?: RouteAssignmentInput[];
+
+  @IsString()
+  @IsOptional()
+  overviewPolyline?: string;
+}
+
 export class GetRoutesQueryDto {
   @IsOptional()
   @IsString()
   date?: string;
+
+  @IsOptional()
+  @IsString()
+  fromDate?: string;
 
   @IsOptional()
   @IsUUID()

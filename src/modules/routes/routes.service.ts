@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateRouteDto, GetRoutesQueryDto } from './routes.dto';
+import { CreateRouteDto, GetRoutesQueryDto, UpdateRouteDto } from './routes.dto';
 import { RouteStatus, AssignmentStatus } from '@prisma/client';
 import { ORDER_EVENT_TYPES } from '../orders/constants/order-events.constants';
 import { getLimaDayRange } from '../../core/utils/date.util';
@@ -129,6 +129,192 @@ export class RoutesService {
     });
   }
 
+  async updateRoute(id: string, dto: UpdateRouteDto, actor: string = 'system') {
+    return this.prisma.$transaction(async (tx: any) => {
+      // 1. Obtener la ruta actual con sus asignaciones activas
+      const route = await tx.route.findUnique({
+        where: { id },
+        include: {
+          assignments: {
+            where: { voidedAt: null },
+            orderBy: { sequenceIndex: 'asc' },
+          },
+        },
+      });
+
+      if (!route) {
+        throw new NotFoundException('Ruta no encontrada');
+      }
+
+      // 2. Candado estricto: solo rutas en estado PENDING y de hoy o futuras pueden ser editadas
+      if (route.status !== RouteStatus.PENDING) {
+        throw new BadRequestException(
+          'Solo se pueden editar rutas que se encuentren en estado Pendiente (antes de que el chofer inicie la ruta).',
+        );
+      }
+
+      const todayStart = getLimaDayRange().startOfDay;
+      const routeDateRange = getLimaDayRange(route.date);
+      if (routeDateRange.startOfDay < todayStart) {
+        throw new BadRequestException('Solo se pueden editar rutas del día de hoy o fechas futuras.');
+      }
+
+      // 3. Resolver fecha objetivo
+      const targetDateStr = dto.date || route.date.toISOString().slice(0, 10);
+      const { startOfDay: targetDate, endOfDay } = getLimaDayRange(targetDateStr);
+
+      if (targetDate < todayStart) {
+        throw new BadRequestException('No se pueden programar rutas en fechas pasadas.');
+      }
+
+      const targetDriverId = dto.driverId || route.driverId;
+      const oldDriverId = route.driverId;
+
+      // 4. Si cambia de chofer o de fecha, validar que no tenga otra ruta activa
+      if (targetDriverId !== route.driverId || targetDate.getTime() !== route.date.getTime()) {
+        const activeRouteSameDay = await tx.route.findFirst({
+          where: {
+            id: { not: id },
+            driverId: targetDriverId,
+            date: { gte: targetDate, lte: endOfDay },
+            status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
+            assignments: { some: { voidedAt: null } },
+          },
+        });
+        if (activeRouteSameDay) {
+          throw new BadRequestException('El chofer ya tiene una ruta activa para este día. Debes esperar a que la finalice.');
+        }
+      }
+
+      // 5. Manejar asignaciones si se envían en el DTO
+      if (dto.assignments !== undefined) {
+        const newOrderIds = dto.assignments.map((a) => a.orderId);
+
+        if (newOrderIds.length > 0) {
+          // Bloquear pedidos en pausa comercial
+          const pausedOrder = await tx.order.findFirst({
+            where: {
+              id: { in: newOrderIds },
+              isPaused: true,
+            },
+          });
+          if (pausedOrder) {
+            throw new BadRequestException(
+              `El pedido con código ${pausedOrder.code} está en pausa y no puede asignarse a una ruta.`,
+            );
+          }
+
+          // Validar que los pedidos no estén en OTRA ruta activa para el mismo día
+          const existingInOtherRoutes = await tx.routeAssignment.findFirst({
+            where: {
+              routeId: { not: id },
+              orderId: { in: newOrderIds },
+              voidedAt: null,
+              OR: [
+                { status: AssignmentStatus.DELIVERED },
+                { status: AssignmentStatus.IN_TRANSIT },
+                { date: { gte: targetDate, lte: endOfDay } },
+              ],
+            },
+          });
+
+          if (existingInOtherRoutes) {
+            throw new BadRequestException(
+              'Uno o más pedidos ya se encuentran asignados a otra ruta o ya fueron entregados.',
+            );
+          }
+        }
+
+        const currentAssignments = route.assignments;
+        const currentOrderMap = new Map<string, any>(currentAssignments.map((a: any) => [a.orderId, a]));
+
+        // A) Desacoplar pedidos que ya no están en la lista (voidedAt)
+        for (const curr of currentAssignments) {
+          if (!newOrderIds.includes(curr.orderId)) {
+            await tx.routeAssignment.update({
+              where: { id: curr.id },
+              data: { voidedAt: new Date() },
+            });
+
+            await tx.orderEvent.create({
+              data: {
+                routeAssignmentId: curr.id,
+                type: ORDER_EVENT_TYPES.DRIVER_UNASSIGNED,
+                actor,
+                metadata: { note: 'Pedido desasignado durante edición de ruta' },
+              },
+            });
+          }
+        }
+
+        // B) Actualizar secuencia y chofer para existentes, o crear nuevas asignaciones
+        for (let i = 0; i < dto.assignments.length; i++) {
+          const orderId = dto.assignments[i].orderId;
+          const existing = currentOrderMap.get(orderId);
+
+          if (existing) {
+            await tx.routeAssignment.update({
+              where: { id: existing.id },
+              data: {
+                sequenceIndex: i + 1,
+                driverId: targetDriverId,
+                date: targetDate,
+              },
+            });
+          } else {
+            await tx.routeAssignment.create({
+              data: {
+                routeId: id,
+                orderId,
+                driverId: targetDriverId,
+                date: targetDate,
+                sequenceIndex: i + 1,
+                status: AssignmentStatus.PENDING,
+              },
+            });
+          }
+        }
+      }
+
+      // 6. Actualizar la Route
+      const updatedRoute = await tx.route.update({
+        where: { id },
+        data: {
+          name: dto.name !== undefined ? (dto.name ? dto.name.trim() : null) : undefined,
+          driverId: targetDriverId,
+          date: targetDate,
+          overviewPolyline: dto.overviewPolyline !== undefined ? dto.overviewPolyline : undefined,
+        },
+        include: {
+          driver: {
+            include: {
+              user: {
+                select: { name: true, email: true },
+              },
+            },
+          },
+          assignments: {
+            where: { voidedAt: null },
+            orderBy: { sequenceIndex: 'asc' },
+            include: {
+              order: true,
+            },
+          },
+        },
+      });
+
+      // 7. Notificar por WebSocket al chofer asignado (y al anterior si cambió)
+      if (targetDriverId) {
+        this.trackingGateway.notifyOrderAssigned(targetDriverId, id);
+      }
+      if (oldDriverId && oldDriverId !== targetDriverId) {
+        this.trackingGateway.notifyOrderAssigned(oldDriverId, id);
+      }
+
+      return updatedRoute;
+    });
+  }
+
   async findAll(query: GetRoutesQueryDto) {
     const page = query.page || 1;
     const limit = query.limit || 20;
@@ -147,6 +333,11 @@ export class RoutesService {
       whereCondition.date = {
         gte: startOfDay,
         lte: endOfDay,
+      };
+    } else if (query.fromDate) {
+      const { startOfDay } = getLimaDayRange(query.fromDate);
+      whereCondition.date = {
+        gte: startOfDay,
       };
     }
 
