@@ -10,9 +10,9 @@ export class AyraWebhookChannel {
   constructor(private readonly prisma: PrismaService) {}
 
   private getConfig() {
-    const url = (process.env.AYRA_WEBHOOK_URL || process.env.SALINAS_WEBHOOK_URL)?.trim();
-    const apiKey = (process.env.AYRA_API_KEY || process.env.SALINAS_API_KEY)?.trim();
-    const hmacSecret = (process.env.AYRA_HMAC_SECRET || process.env.SALINAS_HMAC_SECRET)?.trim();
+    const url = process.env.AYRA_WEBHOOK_URL?.trim();
+    const apiKey = process.env.AYRA_API_KEY?.trim();
+    const hmacSecret = process.env.AYRA_HMAC_SECRET?.trim();
     if (!url || !apiKey) return null;
     return { url, apiKey, hmacSecret };
   }
