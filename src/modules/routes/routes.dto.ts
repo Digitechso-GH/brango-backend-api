@@ -17,6 +17,10 @@ export class CreateRouteDto {
   @IsNotEmpty()
   driverId: string;
 
+  @IsUUID()
+  @IsNotEmpty({ message: 'El vehículo es obligatorio' })
+  vehicleId: string;
+
   @IsString()
   @IsNotEmpty()
   date: string; // Formato YYYY-MM-DD
@@ -40,6 +44,10 @@ export class UpdateRouteDto {
   @IsUUID()
   @IsOptional()
   driverId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  vehicleId?: string;
 
   @IsString()
   @IsOptional()

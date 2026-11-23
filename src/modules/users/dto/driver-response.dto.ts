@@ -13,9 +13,6 @@ export class DriverResponseDto {
   user?: UserResponseDto;
 
   @Expose()
-  unit: string | null;
-
-  @Expose()
   phone: string | null;
 
   @Expose()

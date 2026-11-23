@@ -52,6 +52,12 @@ export class TrackingService {
     const drivers = await this.prisma.driverProfile.findMany({
       include: {
         user: { select: { name: true, email: true } },
+        routes: {
+          where: { status: { in: ['PENDING', 'IN_PROGRESS'] } },
+          include: { vehicle: { select: { plate: true } } },
+          orderBy: { date: 'desc' },
+          take: 1,
+        },
       },
     });
 
@@ -65,7 +71,7 @@ export class TrackingService {
         locations.push({
           driverId: driver.id,
           name: driver.user.name,
-          unit: driver.unit,
+          unit: driver.routes?.[0]?.vehicle?.plate || null,
           phone: driver.phone,
           latitude: lastLoc.latitude,
           longitude: lastLoc.longitude,

@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { UsersService } from '../users/users.service';
@@ -31,6 +31,18 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
 
+    if (user.active === false) {
+      throw new UnauthorizedException('Tu cuenta ha sido desactivada. Contacta al gerente de tu empresa.');
+    }
+
+    if (user.tenant && user.tenant.status === 'SUSPENDED') {
+      throw new UnauthorizedException('La empresa se encuentra suspendida. Contacta al administrador de plataforma.');
+    }
+
+    if (loginDto.clientType === 'MOBILE' && user.role.code !== ROLES.SYS_DRIVER) {
+      throw new ForbiddenException('Acceso denegado: la aplicación móvil es exclusiva para choferes.');
+    }
+
     return user;
   }
 
@@ -42,7 +54,6 @@ export class AuthService {
       const fullUser = await this.usersService.findById(user.id);
       if (fullUser?.driver) {
         driverId = fullUser.driver.id;
-        unit = fullUser.driver.unit;
       }
     }
 
@@ -51,6 +62,8 @@ export class AuthService {
       email: user.email,
       name: user.name,
       role: user.role.code,
+      tenantId: user.tenantId ?? null,
+      planTier: user.tenant?.planTier ?? null,
       driverId,
     };
 
@@ -67,6 +80,9 @@ export class AuthService {
         name: user.name,
         email: user.email,
         role: user.role.code,
+        tenantId: user.tenantId ?? null,
+        tenantName: user.tenant?.tradeName || user.tenant?.name || null,
+        planTier: user.tenant?.planTier ?? null,
         driverId,
         unit,
       },

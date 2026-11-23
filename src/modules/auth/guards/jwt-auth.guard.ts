@@ -32,14 +32,38 @@ export class JwtAuthGuard implements CanActivate {
       );
       const payload: any = await this.jwtService.verifyAsync(token, { secret });
 
-      // Garantizar que req.user siempre contenga driverId para choferes
+      // Garantizar que req.user siempre contenga driverId y tenantId
       if (payload.role === 'SYS_DRIVER' && !payload.driverId) {
         const profile = await this.prisma.driverProfile.findUnique({
           where: { userId: payload.sub },
-          select: { id: true },
+          select: { id: true, tenantId: true },
         });
         if (profile) {
           payload.driverId = profile.id;
+          if (!payload.tenantId && profile.tenantId) {
+            payload.tenantId = profile.tenantId;
+          }
+        }
+      }
+
+      // Verificar en tiempo real que el usuario esté activo y su empresa no esté suspendida
+      if (payload.role !== 'SYS_SUPERADMIN') {
+        const dbUser = await this.prisma.user.findUnique({
+          where: { id: payload.sub },
+          select: {
+            active: true,
+            tenantId: true,
+            tenant: { select: { status: true } },
+          },
+        });
+        if (!dbUser || !dbUser.active) {
+          throw new UnauthorizedException('Cuenta desactivada');
+        }
+        if (dbUser.tenant?.status === 'SUSPENDED') {
+          throw new UnauthorizedException('Empresa suspendida');
+        }
+        if (payload.tenantId === undefined) {
+          payload.tenantId = dbUser.tenantId;
         }
       }
 

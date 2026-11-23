@@ -55,7 +55,7 @@ export class WhatsappChannel {
 
       const first = fullAssignments[0];
       const driverName = first.driver?.user?.name || 'Nuestro chofer';
-      const driverUnit = first.driver?.unit || first.vehicle?.plate || '';
+      const driverUnit = first.vehicle?.plate || '';
       const driverWithUnit = driverUnit ? `${driverName} (${driverUnit})` : driverName;
 
       // 2. Disparo al Administrador (Aislado para no bloquear el envío al cliente)

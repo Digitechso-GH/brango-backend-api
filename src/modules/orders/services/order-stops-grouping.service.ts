@@ -135,7 +135,12 @@ export class OrderStopsGroupingService {
             user: true,
           },
         },
-        route: true,
+        vehicle: true,
+        route: {
+          include: {
+            vehicle: true,
+          },
+        },
       },
       orderBy: [
         { driverId: 'asc' },
@@ -196,7 +201,7 @@ export class OrderStopsGroupingService {
           longitude: first.order.longitude,
           driverId: first.driverId,
           driverName: first.driver?.user?.name || null,
-          unit: first.driver?.unit || null,
+          unit: first.vehicle?.plate || first.route?.vehicle?.plate || null,
           routeId: first.routeId,
           routeStatus,
           canModify: !routeStatus || routeStatus === RouteStatus.PENDING,
@@ -264,7 +269,7 @@ export class OrderStopsGroupingService {
           longitude: first.order.longitude,
           driverId: first.driverId,
           driverName: first.driver?.user?.name || null,
-          unit: first.driver?.unit || null,
+          unit: first.vehicle?.plate || first.route?.vehicle?.plate || null,
           routeId: first.routeId,
           routeStatus,
           canModify: !routeStatus || routeStatus === RouteStatus.PENDING,

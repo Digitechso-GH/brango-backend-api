@@ -41,8 +41,8 @@ export class OrdersService {
   // Lifecycle & Mutaciones (OrdersLifecycleService)
   // ==========================================
 
-  async create(dto: CreateOrderDto, creatorId?: string) {
-    return this.ordersLifecycleService.create(dto, creatorId);
+  async create(dto: CreateOrderDto, creatorId?: string, tenantId?: string) {
+    return this.ordersLifecycleService.create(dto, creatorId, tenantId);
   }
 
   async update(id: string, dto: UpdateOrderDto) {
@@ -77,12 +77,12 @@ export class OrdersService {
   // Consultas & Lectura (OrdersQueryService)
   // ==========================================
 
-  async findAll(search?: string, page: number = 1, limit: number = 20, driverId?: string) {
-    return this.ordersQueryService.findAll(search, page, limit, driverId);
+  async findAll(search?: string, page: number = 1, limit: number = 20, driverId?: string, tenantId?: string) {
+    return this.ordersQueryService.findAll(search, page, limit, driverId, tenantId);
   }
 
-  async findToday(driverIdOrUserId?: string) {
-    return this.ordersQueryService.findToday(driverIdOrUserId);
+  async findToday(driverIdOrUserId?: string, tenantId?: string) {
+    return this.ordersQueryService.findToday(driverIdOrUserId, tenantId);
   }
 
   async findOne(id: string) {
@@ -135,8 +135,8 @@ export class OrdersService {
   // Importaciones & Agrupaciones
   // ==========================================
 
-  async importExcel(fileBuffer: Buffer, operatorId?: string) {
-    return this.ordersLifecycleService.importExcel(fileBuffer, operatorId);
+  async importExcel(fileBuffer: Buffer, operatorId?: string, tenantId?: string) {
+    return this.ordersLifecycleService.importExcel(fileBuffer, operatorId, tenantId);
   }
 
   async addGroupEvidence(dto: GroupEvidenceDto) {

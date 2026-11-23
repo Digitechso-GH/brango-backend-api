@@ -1,10 +1,13 @@
 import {
+  IsBoolean,
   IsEmail,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   MinLength,
 } from 'class-validator';
+import { LicenseCategory } from '@prisma/client';
 
 export class CreateDriverDto {
   @IsString({ message: 'Name must be a string' })
@@ -23,11 +26,19 @@ export class CreateDriverDto {
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password: string;
 
-  @IsString({ message: 'Unit must be a string' })
-  @IsOptional()
-  unit?: string;
-
   @IsString({ message: 'Phone must be a string' })
   @IsOptional()
   phone?: string;
+
+  @IsString({ message: 'El número de licencia debe ser texto' })
+  @IsOptional()
+  licenseNumber?: string;
+
+  @IsEnum(LicenseCategory, { message: 'Categoría de licencia no válida' })
+  @IsOptional()
+  licenseCategory?: LicenseCategory;
+
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
 }

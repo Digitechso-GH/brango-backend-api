@@ -16,6 +16,7 @@ export class OrdersImportService {
   async executeAtomicImport(
     validRows: ParsedExcelRow[],
     operatorId: string,
+    tenantId?: string,
   ): Promise<{ importedCount: number; orders: any[]; message: string }> {
     const clientMap = new Map<string, string | null>();
     for (const item of validRows) {
@@ -27,6 +28,7 @@ export class OrdersImportService {
           recipientName: item.recipientName,
           companyName: item.companyName,
           companyRuc: item.companyRuc,
+          tenantId,
         });
         clientMap.set(cacheKey, customerId);
       }
@@ -41,40 +43,38 @@ export class OrdersImportService {
           const resolvedCustomerId = clientMap.get(cacheKey) || null;
 
           try {
-            const order = await txPrisma.order.upsert({
-              where: { code: item.code },
-              create: {
-                code: item.code,
-                waybill: item.waybill,
-                recipientCustomerType: item.recipientCustomerType,
-                recipientDocument: item.recipientDocument,
-                recipientName: item.recipientName,
-                recipientPhone: item.recipientPhone,
-                rawAddress: item.rawAddress,
-                formattedAddress: item.formattedAddress,
-                latitude: item.latitude,
-                longitude: item.longitude,
-                geocodingStatus: item.geocodingStatus as GeocodingStatus,
-                customerId: resolvedCustomerId,
-                warehouseContact: item.warehouseContact,
-                dueDate: item.dueDate || null,
-              },
-              update: {
-                waybill: item.waybill,
-                recipientCustomerType: item.recipientCustomerType,
-                recipientDocument: item.recipientDocument,
-                recipientName: item.recipientName,
-                recipientPhone: item.recipientPhone,
-                rawAddress: item.rawAddress,
-                formattedAddress: item.formattedAddress,
-                latitude: item.latitude,
-                longitude: item.longitude,
-                geocodingStatus: item.geocodingStatus as GeocodingStatus,
-                customerId: resolvedCustomerId,
-                warehouseContact: item.warehouseContact,
-                dueDate: item.dueDate || null,
-              },
+            const existing = await txPrisma.order.findFirst({
+              where: { code: item.code, ...(tenantId ? { tenantId } : {}) },
             });
+
+            const orderData = {
+              waybill: item.waybill,
+              recipientCustomerType: item.recipientCustomerType,
+              recipientDocument: item.recipientDocument,
+              recipientName: item.recipientName,
+              recipientPhone: item.recipientPhone,
+              rawAddress: item.rawAddress,
+              formattedAddress: item.formattedAddress,
+              latitude: item.latitude,
+              longitude: item.longitude,
+              geocodingStatus: item.geocodingStatus as GeocodingStatus,
+              customerId: resolvedCustomerId,
+              warehouseContact: item.warehouseContact,
+              dueDate: item.dueDate || null,
+            };
+
+            const order = existing
+              ? await txPrisma.order.update({
+                  where: { id: existing.id },
+                  data: orderData,
+                })
+              : await txPrisma.order.create({
+                  data: {
+                    code: item.code,
+                    ...(tenantId ? { tenantId } : {}),
+                    ...orderData,
+                  },
+                });
 
             resultOrders.push(order);
           } catch (err: any) {

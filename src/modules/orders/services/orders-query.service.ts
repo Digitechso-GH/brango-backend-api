@@ -14,10 +14,12 @@ export class OrdersQueryService {
     private readonly trackingGateway: TrackingGateway,
   ) {}
 
-  async findAll(search?: string, page: number = 1, limit: number = 20, driverId?: string) {
+  async findAll(search?: string, page: number = 1, limit: number = 20, driverId?: string, tenantId?: string) {
     const skip = (page - 1) * limit;
 
-    let whereCondition: Prisma.OrderWhereInput = {};
+    let whereCondition: Prisma.OrderWhereInput = {
+      ...(tenantId ? { tenantId } : {}),
+    };
 
     if (search && search.trim() !== '') {
       const searchNormalized = search.trim();
@@ -68,7 +70,7 @@ export class OrdersQueryService {
     };
   }
 
-  async findToday(driverIdOrUserId?: string) {
+  async findToday(driverIdOrUserId?: string, tenantId?: string) {
     const targetDate = new Date();
     const { startOfDay, endOfDay } = getLimaDayRange(targetDate);
 
@@ -76,6 +78,7 @@ export class OrdersQueryService {
     if (driverIdOrUserId) {
       const profile = await this.prisma.driverProfile.findFirst({
         where: {
+          ...(tenantId ? { tenantId } : {}),
           OR: [
             { id: driverIdOrUserId },
             { userId: driverIdOrUserId },
@@ -92,6 +95,7 @@ export class OrdersQueryService {
 
     if (resolvedDriverId) {
       whereCondition = {
+        ...(tenantId ? { tenantId } : {}),
         isPaused: false,
         assignments: {
           some: {
@@ -106,6 +110,7 @@ export class OrdersQueryService {
       };
     } else {
       whereCondition = {
+        ...(tenantId ? { tenantId } : {}),
         isPaused: false,
         OR: [
           { createdAt: { gte: startOfDay, lte: endOfDay } },
@@ -257,7 +262,7 @@ export class OrdersQueryService {
     if (activeAssignment?.driver) {
       driverInfo = {
         name: activeAssignment.driver.user?.name || 'Chofer Asignado',
-        unit: activeAssignment.driver.unit || activeAssignment.vehicle?.plate || null,
+        unit: activeAssignment.vehicle?.plate || null,
       };
 
       // Si el pedido está en camino, exponer ubicación actual en tiempo real desde snapshots

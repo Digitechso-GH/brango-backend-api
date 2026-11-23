@@ -18,7 +18,9 @@ enum GeocodingStatus {
 
 model Order {
   id                    String                @id @default(uuid())
-  code                  String                @unique
+  tenantId              String?
+  tenant                Tenant?               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code                  String
   publicTrackingToken   String                @unique @default(uuid())
   waybill               String?
   recipientCustomerType RecipientCustomerType @default(COMPANY)
@@ -55,6 +57,8 @@ model Order {
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
 
+  @@unique([tenantId, code])
+  @@index([tenantId])
   @@index([customerId])
   @@index([originBranchId])
   @@index([isPaused])
@@ -69,9 +73,13 @@ enum RouteStatus {
 
 model Route {
   id               String            @id @default(uuid())
+  tenantId         String?
+  tenant           Tenant?           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name             String?
   driverId         String
   driver           DriverProfile     @relation(fields: [driverId], references: [id])
+  vehicleId        String
+  vehicle          Vehicle           @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
   date             DateTime
   sequenceIndex    Int
   status           RouteStatus       @default(PENDING)
@@ -82,7 +90,9 @@ model Route {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   
+  @@index([tenantId])
   @@index([driverId])
+  @@index([vehicleId])
   @@index([date])
 }
 
@@ -126,14 +136,35 @@ model RouteAssignment {
   @@index([date])
 }
 
+enum VehicleType {
+  AUTOMOVIL
+  CAMIONETA
+  PICKUP
+  FURGON
+  CAMION
+  TRACTO
+  OTRO
+}
+
 model Vehicle {
   id          String            @id @default(uuid())
-  plate       String            @unique
+  tenantId    String?
+  tenant      Tenant?           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plate       String
   model       String?
   brand       String?
+  axles       Int?
+  capacityKg  Float?
+  capacityM3  Float?
+  vehicleType VehicleType       @default(CAMION)
+  active      Boolean           @default(true)
+  routes      Route[]
   assignments RouteAssignment[]
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
+
+  @@unique([tenantId, plate])
+  @@index([tenantId])
 }
 
 model OrderEvent {

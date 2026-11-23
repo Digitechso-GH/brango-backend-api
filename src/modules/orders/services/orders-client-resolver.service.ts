@@ -9,6 +9,7 @@ export interface ResolveClientParams {
   companyName?: string | null;
   companyRuc?: string | null;
   customerId?: string | null;
+  tenantId?: string | null;
 }
 
 @Injectable()
@@ -20,10 +21,11 @@ export class OrdersClientResolverService {
     txPrisma?: Prisma.TransactionClient,
   ): Promise<string | null> {
     const db = txPrisma || this.prisma;
+    const tenantScope = params.tenantId ? { tenantId: params.tenantId } : {};
 
     if (params.customerId) {
-      const existingCustomer = await db.customer.findUnique({
-        where: { id: params.customerId },
+      const existingCustomer = await db.customer.findFirst({
+        where: { id: params.customerId, ...tenantScope },
       });
       if (existingCustomer) return existingCustomer.id;
     }
@@ -33,12 +35,12 @@ export class OrdersClientResolverService {
 
     if (cleanRuc || cleanName) {
       let company = cleanRuc
-        ? await db.company.findUnique({
-            where: { ruc: cleanRuc },
+        ? await db.company.findFirst({
+            where: { ruc: cleanRuc, ...tenantScope },
             include: { customers: true },
           })
         : await db.company.findFirst({
-            where: { name: { equals: cleanName, mode: 'insensitive' } },
+            where: { name: { equals: cleanName, mode: 'insensitive' }, ...tenantScope },
             include: { customers: true },
           });
 
@@ -48,6 +50,7 @@ export class OrdersClientResolverService {
           data: {
             name: cleanName || cleanRuc,
             ruc: finalRuc,
+            ...(params.tenantId ? { tenantId: params.tenantId } : {}),
           },
           include: { customers: true },
         });
@@ -59,6 +62,7 @@ export class OrdersClientResolverService {
           data: {
             name: cleanName || company.name,
             companyId: company.id,
+            ...(params.tenantId ? { tenantId: params.tenantId } : {}),
           },
         });
       }

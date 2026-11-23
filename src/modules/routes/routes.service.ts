@@ -5,6 +5,10 @@ import { RouteStatus, AssignmentStatus } from '@prisma/client';
 import { ORDER_EVENT_TYPES } from '../orders/constants/order-events.constants';
 import { getLimaDayRange } from '../../core/utils/date.util';
 import { TrackingGateway } from '../tracking/tracking.gateway';
+import {
+  LicenseCompatibilityRule,
+  validateDriverVehicleCompatibility,
+} from './license-compatibility.util';
 
 @Injectable()
 export class RoutesService {
@@ -13,7 +17,91 @@ export class RoutesService {
     private readonly trackingGateway: TrackingGateway,
   ) {}
 
-  async createRoute(dto: CreateRouteDto) {
+  private async validateRouteResources(
+    tx: any,
+    params: {
+      driverId: string;
+      vehicleId?: string | null;
+      targetDate: Date;
+      endOfDay: Date;
+      tenantId?: string | null;
+      excludeRouteId?: string;
+    },
+  ) {
+    const { driverId, vehicleId, targetDate, endOfDay, tenantId, excludeRouteId } = params;
+
+    const driver = await tx.driverProfile.findFirst({
+      where: { id: driverId, ...(tenantId ? { tenantId } : {}) },
+      include: { user: { select: { active: true, name: true } } },
+    });
+    if (!driver) {
+      throw new NotFoundException('Chofer no encontrado');
+    }
+    if (!driver.active || !driver.user?.active) {
+      throw new BadRequestException('No se puede asignar un chofer inactivo a la ruta.');
+    }
+
+    const activeDriverRoute = await tx.route.findFirst({
+      where: {
+        ...(excludeRouteId ? { id: { not: excludeRouteId } } : {}),
+        driverId,
+        date: { gte: targetDate, lte: endOfDay },
+        status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
+      },
+    });
+    if (activeDriverRoute) {
+      throw new BadRequestException(
+        'El chofer ya tiene una ruta activa para esta fecha. Debes esperar a que la finalice.',
+      );
+    }
+
+    if (vehicleId) {
+      const vehicle = await tx.vehicle.findFirst({
+        where: { id: vehicleId, ...(tenantId ? { tenantId } : {}) },
+      });
+      if (!vehicle) {
+        throw new NotFoundException('Vehículo no encontrado');
+      }
+      if (!vehicle.active) {
+        throw new BadRequestException('No se puede asignar un vehículo inactivo a la ruta.');
+      }
+
+      const activeVehicleRoute = await tx.route.findFirst({
+        where: {
+          ...(excludeRouteId ? { id: { not: excludeRouteId } } : {}),
+          vehicleId,
+          date: { gte: targetDate, lte: endOfDay },
+          status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
+        },
+      });
+      if (activeVehicleRoute) {
+        throw new BadRequestException(
+          `El vehículo ${vehicle.plate} ya está asignado a otra ruta activa para esta fecha.`,
+        );
+      }
+
+      let customRules: LicenseCompatibilityRule[] | null = null;
+      if (tenantId) {
+        const config = await tx.tenantConfig.findUnique({
+          where: { tenantId_key: { tenantId, key: 'LICENSE_VEHICLE_MATRIX' } },
+        });
+        if (config?.value) {
+          try {
+            customRules = JSON.parse(config.value);
+          } catch {
+            customRules = null;
+          }
+        }
+      }
+
+      const compatibility = validateDriverVehicleCompatibility(driver, vehicle, customRules);
+      if (!compatibility.compatible) {
+        throw new BadRequestException(compatibility.reason || 'Licencia y vehículo incompatibles.');
+      }
+    }
+  }
+
+  async createRoute(dto: CreateRouteDto, tenantId?: string) {
     const { startOfDay: targetDate, endOfDay } = getLimaDayRange(dto.date);
     const todayStart = getLimaDayRange().startOfDay;
 
@@ -24,18 +112,14 @@ export class RoutesService {
     const assignments = dto.assignments || [];
 
     return this.prisma.$transaction(async (tx: any) => {
-      // 1. Validar que el chofer no tenga ya una ruta activa con pedidos activos en la misma fecha
-      const activeRouteSameDay = await tx.route.findFirst({
-        where: { 
-          driverId: dto.driverId, 
-          date: { gte: targetDate, lte: endOfDay },
-          status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
-          assignments: { some: { voidedAt: null } },
-        },
+      // 1. Validar chofer, vehículo, disponibilidad por fecha y compatibilidad
+      await this.validateRouteResources(tx, {
+        driverId: dto.driverId,
+        vehicleId: dto.vehicleId,
+        targetDate,
+        endOfDay,
+        tenantId,
       });
-      if (activeRouteSameDay) {
-        throw new BadRequestException('El chofer ya tiene una ruta activa para este día. Debes esperar a que la finalice.');
-      }
 
       // 2. Validar pedidos si se proporcionan asignaciones
       if (assignments.length > 0) {
@@ -88,6 +172,8 @@ export class RoutesService {
         data: {
           name: dto.name || null,
           driverId: dto.driverId,
+          vehicleId: dto.vehicleId,
+          ...(tenantId ? { tenantId } : {}),
           date: targetDate,
           sequenceIndex: routeSequenceIndex,
           status: 'PENDING',
@@ -97,6 +183,7 @@ export class RoutesService {
                 create: assignments.map((assignment, index) => ({
                   orderId: assignment.orderId,
                   driverId: dto.driverId,
+                  vehicleId: dto.vehicleId,
                   date: targetDate,
                   sequenceIndex: index + 1,
                   status: 'PENDING',
@@ -112,6 +199,7 @@ export class RoutesService {
               },
             },
           },
+          vehicle: true,
           assignments: {
             include: {
               order: true,
@@ -168,23 +256,18 @@ export class RoutesService {
       }
 
       const targetDriverId = dto.driverId || route.driverId;
+      const targetVehicleId = dto.vehicleId !== undefined ? (dto.vehicleId || null) : route.vehicleId;
       const oldDriverId = route.driverId;
 
-      // 4. Si cambia de chofer o de fecha, validar que no tenga otra ruta activa
-      if (targetDriverId !== route.driverId || targetDate.getTime() !== route.date.getTime()) {
-        const activeRouteSameDay = await tx.route.findFirst({
-          where: {
-            id: { not: id },
-            driverId: targetDriverId,
-            date: { gte: targetDate, lte: endOfDay },
-            status: { in: [RouteStatus.PENDING, RouteStatus.IN_PROGRESS] },
-            assignments: { some: { voidedAt: null } },
-          },
-        });
-        if (activeRouteSameDay) {
-          throw new BadRequestException('El chofer ya tiene una ruta activa para este día. Debes esperar a que la finalice.');
-        }
-      }
+      // 4. Validar disponibilidad y compatibilidad de chofer y vehículo para la fecha objetivo
+      await this.validateRouteResources(tx, {
+        driverId: targetDriverId,
+        vehicleId: targetVehicleId,
+        targetDate,
+        endOfDay,
+        tenantId: route.tenantId,
+        excludeRouteId: id,
+      });
 
       // 5. Manejar asignaciones si se envían en el DTO
       if (dto.assignments !== undefined) {
@@ -258,6 +341,7 @@ export class RoutesService {
               data: {
                 sequenceIndex: i + 1,
                 driverId: targetDriverId,
+                vehicleId: targetVehicleId,
                 date: targetDate,
               },
             });
@@ -267,6 +351,7 @@ export class RoutesService {
                 routeId: id,
                 orderId,
                 driverId: targetDriverId,
+                vehicleId: targetVehicleId,
                 date: targetDate,
                 sequenceIndex: i + 1,
                 status: AssignmentStatus.PENDING,
@@ -282,6 +367,7 @@ export class RoutesService {
         data: {
           name: dto.name !== undefined ? (dto.name ? dto.name.trim() : null) : undefined,
           driverId: targetDriverId,
+          vehicleId: targetVehicleId,
           date: targetDate,
           overviewPolyline: dto.overviewPolyline !== undefined ? dto.overviewPolyline : undefined,
         },
@@ -293,6 +379,7 @@ export class RoutesService {
               },
             },
           },
+          vehicle: true,
           assignments: {
             where: { voidedAt: null },
             orderBy: { sequenceIndex: 'asc' },
@@ -315,10 +402,12 @@ export class RoutesService {
     });
   }
 
-  async findAll(query: GetRoutesQueryDto) {
+  async findAll(query: GetRoutesQueryDto, tenantId?: string) {
     const page = query.page || 1;
     const limit = query.limit || 20;
-    const whereCondition: any = {};
+    const whereCondition: any = {
+      ...(tenantId ? { tenantId } : {}),
+    };
 
     if (query.driverId) {
       whereCondition.driverId = query.driverId;
@@ -352,6 +441,7 @@ export class RoutesService {
             },
           },
         },
+        vehicle: true,
         assignments: {
           where: { voidedAt: null },
           select: {
@@ -371,7 +461,9 @@ export class RoutesService {
       name: r.name,
       driverId: r.driverId,
       driverName: r.driver?.user?.name || null,
-      unit: r.driver?.unit || null,
+      vehicleId: r.vehicleId,
+      vehiclePlate: r.vehicle?.plate || null,
+      unit: r.vehicle?.plate || null,
       date: r.date,
       sequenceIndex: r.sequenceIndex,
       status: r.status,
@@ -405,6 +497,7 @@ export class RoutesService {
             },
           },
         },
+        vehicle: true,
         assignments: {
           where: { voidedAt: null },
           orderBy: { sequenceIndex: 'asc' },
@@ -482,15 +575,16 @@ export class RoutesService {
     return this.cancelRoute(id, 'system');
   }
 
-  async getMobileRoutes(driverIdOrUserId?: string) {
+  async getMobileRoutes(driverIdOrUserId?: string, tenantId?: string) {
     if (!driverIdOrUserId) {
       return [];
     }
 
-    // Resolver driverId ya sea que venga como DriverProfile.id o como User.id
+    // Resolver driverId ya sea que venga como DriverProfile.id o como User.id dentro del tenant
     let resolvedDriverId = driverIdOrUserId;
     const profile = await this.prisma.driverProfile.findFirst({
       where: {
+        ...(tenantId ? { tenantId } : {}),
         OR: [
           { id: driverIdOrUserId },
           { userId: driverIdOrUserId },
@@ -510,6 +604,7 @@ export class RoutesService {
     return this.prisma.route.findMany({
       where: {
         driverId: resolvedDriverId,
+        ...(tenantId ? { tenantId } : {}),
         status: { not: RouteStatus.CANCELLED },
         assignments: { some: { voidedAt: null } },
         OR: [
@@ -608,13 +703,19 @@ export class RoutesService {
     });
   }
 
-  async completeRoute(routeId: string) {
+  async completeRoute(routeId: string, tenantId?: string, driverId?: string) {
     return this.prisma.$transaction(async (tx: any) => {
       const route = await tx.route.findUnique({ 
         where: { id: routeId },
         include: { assignments: { where: { voidedAt: null } } }
       });
       if (!route) throw new BadRequestException('Ruta no encontrada');
+      if (tenantId && route.tenantId && route.tenantId !== tenantId) {
+        throw new BadRequestException('Ruta no encontrada');
+      }
+      if (driverId && route.driverId !== driverId) {
+        throw new BadRequestException('No tienes permiso para cerrar una ruta asignada a otro chofer');
+      }
 
       if (route.status === RouteStatus.COMPLETED) {
         throw new BadRequestException('Esta ruta ya fue cerrada previamente por un administrador o por el sistema.');

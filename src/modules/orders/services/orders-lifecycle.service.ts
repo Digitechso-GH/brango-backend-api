@@ -1,4 +1,4 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -50,14 +50,16 @@ export class OrdersLifecycleService {
     return defaultOperator.id;
   }
 
-  async create(dto: CreateOrderDto, creatorId?: string) {
+  async create(dto: CreateOrderDto, creatorId?: string, tenantId?: string) {
     const finalCreatorId = await this.getValidOperatorId(creatorId);
     const finalCode = dto.code?.trim();
     if (!finalCode) {
       throw new BadRequestException('El Nº de pedido es obligatorio');
     }
 
-    const exists = await this.prisma.order.findUnique({ where: { code: finalCode } });
+    const exists = await this.prisma.order.findFirst({
+      where: { code: finalCode, ...(tenantId ? { tenantId } : {}) },
+    });
     if (exists) {
       throw new BadRequestException(`El Nº de pedido "${finalCode}" ya se encuentra registrado`);
     }
@@ -84,12 +86,14 @@ export class OrdersLifecycleService {
       companyName: dto.companyName,
       companyRuc: dto.companyRuc,
       customerId: dto.customerId,
+      tenantId,
     });
 
     return this.prisma.$transaction(async (tx) => {
       const createdOrder = await tx.order.create({
         data: {
           code: finalCode,
+          ...(tenantId ? { tenantId } : {}),
           waybill: dto.waybill,
           recipientCustomerType: dto.recipientCustomerType === 'COMPANY' ? RecipientCustomerType.COMPANY : RecipientCustomerType.INDIVIDUAL,
           recipientDocument: dto.recipientDocument,
@@ -141,10 +145,10 @@ export class OrdersLifecycleService {
     });
   }
 
-  async importExcel(buffer: Buffer, operatorId?: string) {
+  async importExcel(buffer: Buffer, operatorId?: string, tenantId?: string) {
     const finalOperatorId = await this.getValidOperatorId(operatorId);
     const validRows = await this.excelParserService.parseAndValidateExcelBuffer(buffer);
-    return this.importService.executeAtomicImport(validRows, finalOperatorId);
+    return this.importService.executeAtomicImport(validRows, finalOperatorId, tenantId);
   }
 
   async executeEodRouteCascadeClosure(): Promise<number> {

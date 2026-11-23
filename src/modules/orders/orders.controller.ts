@@ -45,14 +45,19 @@ export class OrdersController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
   async create(
     @Body() dto: CreateOrderDto,
+    @Request() req: any,
     @Headers('x-user-id') creatorId?: string,
   ) {
-    return this.ordersService.create(dto, creatorId);
+    return this.ordersService.create(dto, creatorId || req.user?.sub, req.user?.tenantId);
   }
 
   @Post('presigned-url')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_COORDINATOR, ROLES.SYS_OPERATOR)
   async getPresignedUrl(
     @Body('key') key?: string,
     @Body('contentType') contentType?: string,
@@ -88,17 +93,20 @@ export class OrdersController {
   }
 
   @Post('import')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
   @UseInterceptors(FileInterceptor('file'))
   async importOrders(
     @UploadedFile() file: Express.Multer.File,
+    @Request() req: any,
     @Body('operatorId') operatorId?: string,
     @Headers('x-user-id') creatorId?: string,
   ) {
     if (!file) {
       throw new BadRequestException('No se ha proporcionado ningún archivo');
     }
-    const userId = operatorId || creatorId;
-    return this.ordersService.importExcel(file.buffer, userId);
+    const userId = operatorId || creatorId || req.user?.sub;
+    return this.ordersService.importExcel(file.buffer, userId, req.user?.tenantId);
   }
 
   @Patch('reorder')
@@ -113,7 +121,10 @@ export class OrdersController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR, ROLES.SYS_DRIVER)
   async findAll(
+    @Request() req: any,
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -121,7 +132,7 @@ export class OrdersController {
   ) {
     const pageNumber = page ? parseInt(page, 10) : 1;
     const limitNumber = limit ? parseInt(limit, 10) : 20;
-    return this.ordersService.findAll(search, pageNumber, limitNumber, driverId);
+    return this.ordersService.findAll(search, pageNumber, limitNumber, driverId, req.user?.tenantId);
   }
 
   @Get('today')
@@ -131,7 +142,7 @@ export class OrdersController {
     // Si es chofer, forzamos su propio ID (driverId o sub). Si es Admin/Dispatcher y envían driverId, filtramos por él.
     const isDriver = req.user.role === ROLES.SYS_DRIVER;
     const targetDriverId = isDriver ? (req.user.driverId || req.user.sub) : driverId;
-    return this.ordersService.findToday(targetDriverId);
+    return this.ordersService.findToday(targetDriverId, req.user?.tenantId);
   }
   @Get('duplicates-suggestions')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -194,17 +205,23 @@ export class OrdersController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_COORDINATOR, ROLES.SYS_OPERATOR)
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.ordersService.findOne(id);
   }
 
   @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_ADMIN, ROLES.SYS_COORDINATOR, ROLES.SYS_OPERATOR)
   async update(@Param('id') id: string, @Body() updateOrderDto: UpdateOrderDto) {
     console.log('UpdateOrderDto received:', updateOrderDto);
     return this.ordersService.update(id, updateOrderDto);
   }
 
   @Put(':id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_COORDINATOR, ROLES.SYS_OPERATOR)
   async updateStatus(
     @Param('id', ParseUUIDPipe) routeAssignmentId: string,
     @Body() dto: UpdateOrderStatusDto,
@@ -213,6 +230,8 @@ export class OrdersController {
   }
 
   @Post(':id/evidence')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_COORDINATOR, ROLES.SYS_OPERATOR)
   async addEvidence(
     @Param('id', ParseUUIDPipe) routeAssignmentId: string,
     @Body('s3Url') s3Url: string,

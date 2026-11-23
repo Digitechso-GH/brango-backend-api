@@ -11,9 +11,9 @@ import { CreateClientDto } from './dto/create-client.dto';
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createCompany(dto: CreateCompanyDto) {
-    const existing = await this.prisma.company.findUnique({
-      where: { ruc: dto.ruc },
+  async createCompany(dto: CreateCompanyDto, tenantId?: string) {
+    const existing = await this.prisma.company.findFirst({
+      where: { ruc: dto.ruc, ...(tenantId ? { tenantId } : {}) },
     });
     if (existing) {
       throw new BadRequestException(
@@ -26,6 +26,7 @@ export class CustomersService {
         data: {
           name: dto.name,
           ruc: dto.ruc,
+          ...(tenantId ? { tenantId } : {}),
         },
       });
 
@@ -34,6 +35,7 @@ export class CustomersService {
         data: {
           name: dto.name,
           companyId: company.id,
+          ...(tenantId ? { tenantId } : {}),
         },
       });
 
@@ -41,9 +43,9 @@ export class CustomersService {
     });
   }
 
-  async createClient(dto: CreateClientDto) {
-    const company = await this.prisma.company.findUnique({
-      where: { id: dto.companyId },
+  async createClient(dto: CreateClientDto, tenantId?: string) {
+    const company = await this.prisma.company.findFirst({
+      where: { id: dto.companyId, ...(tenantId ? { tenantId } : {}) },
     });
     if (!company) {
       throw new NotFoundException('La empresa asociada no existe');
@@ -53,28 +55,31 @@ export class CustomersService {
       data: {
         name: dto.name,
         companyId: dto.companyId,
+        ...(tenantId ? { tenantId } : {}),
       },
       include: { company: true },
     });
   }
 
-  async findAllCompanies() {
+  async findAllCompanies(tenantId?: string) {
     return this.prisma.company.findMany({
+      where: tenantId ? { tenantId } : undefined,
       include: { customers: true },
       orderBy: { name: 'asc' },
     });
   }
 
-  async findAllClients() {
+  async findAllClients(tenantId?: string) {
     return this.prisma.customer.findMany({
+      where: tenantId ? { tenantId } : undefined,
       include: { company: true },
       orderBy: { name: 'asc' },
     });
   }
 
-  async findClientById(id: string) {
-    const client = await this.prisma.customer.findUnique({
-      where: { id },
+  async findClientById(id: string, tenantId?: string) {
+    const client = await this.prisma.customer.findFirst({
+      where: { id, ...(tenantId ? { tenantId } : {}) },
       include: { company: true },
     });
     if (!client) {
@@ -83,9 +88,9 @@ export class CustomersService {
     return client;
   }
 
-  async deleteCompany(id: string) {
-    const company = await this.prisma.company.findUnique({
-      where: { id },
+  async deleteCompany(id: string, tenantId?: string) {
+    const company = await this.prisma.company.findFirst({
+      where: { id, ...(tenantId ? { tenantId } : {}) },
       include: {
         customers: {
           include: { orders: true },
@@ -113,18 +118,17 @@ export class CustomersService {
     });
   }
 
-  async updateCompany(id: string, dto: CreateCompanyDto) {
-    const company = await this.prisma.company.findUnique({
-      where: { id },
+  async updateCompany(id: string, dto: CreateCompanyDto, tenantId?: string) {
+    const company = await this.prisma.company.findFirst({
+      where: { id, ...(tenantId ? { tenantId } : {}) },
     });
     if (!company) {
       throw new NotFoundException('Empresa no encontrada');
     }
 
-    // Si cambia el RUC, verificar que no exista duplicado
     if (dto.ruc !== company.ruc) {
-      const existing = await this.prisma.company.findUnique({
-        where: { ruc: dto.ruc },
+      const existing = await this.prisma.company.findFirst({
+        where: { ruc: dto.ruc, ...(tenantId ? { tenantId } : {}) },
       });
       if (existing) {
         throw new BadRequestException(
@@ -142,9 +146,9 @@ export class CustomersService {
     });
   }
 
-  async deleteClient(id: string) {
-    const client = await this.prisma.customer.findUnique({
-      where: { id },
+  async deleteClient(id: string, tenantId?: string) {
+    const client = await this.prisma.customer.findFirst({
+      where: { id, ...(tenantId ? { tenantId } : {}) },
       include: { orders: true },
     });
     if (!client) {

@@ -1,14 +1,67 @@
+enum PlanTier {
+  PLAN_1
+  PLAN_2
+  PLAN_3
+  PLAN_4
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Tenant {
+  id        String       @id @default(uuid())
+  name      String
+  tradeName String?
+  ruc       String       @unique
+  planTier  PlanTier     @default(PLAN_1)
+  status    TenantStatus @default(ACTIVE)
+
+  users     User[]
+  companies Company[]
+  customers Customer[]
+  branches  Branch[]
+  orders    Order[]
+  routes    Route[]
+  drivers   DriverProfile[]
+  vehicles  Vehicle[]
+  configs   TenantConfig[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TenantConfig {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
 model Company {
   id        String     @id @default(uuid())
+  tenantId  String?
+  tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String
-  ruc       String     @unique
+  ruc       String
   customers Customer[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+
+  @@unique([tenantId, ruc])
+  @@index([tenantId])
 }
 
 model Customer {
   id        String   @id @default(uuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String
   companyId String
   company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
@@ -16,10 +69,14 @@ model Customer {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
 }
 
 model Branch {
   id        String   @id @default(uuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String
   address   String
   latitude  Float
@@ -29,6 +86,8 @@ model Branch {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
 }
 
 model SystemConfig {

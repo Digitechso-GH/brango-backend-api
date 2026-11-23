@@ -6,14 +6,14 @@ import { CreateSedeDto } from './dto/create-sede.dto';
 export class SedesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll() {
+  async findAll(tenantId?: string) {
     return this.prisma.branch.findMany({
-      where: { active: true },
+      where: { active: true, ...(tenantId ? { tenantId } : {}) },
       orderBy: { name: 'asc' },
     });
   }
 
-  async create(dto: CreateSedeDto) {
+  async create(dto: CreateSedeDto, tenantId?: string) {
     return this.prisma.branch.create({
       data: {
         name: dto.name,
@@ -21,6 +21,7 @@ export class SedesService {
         latitude: dto.latitude,
         longitude: dto.longitude,
         active: dto.active !== undefined ? dto.active : true,
+        ...(tenantId ? { tenantId } : {}),
       },
     });
   }

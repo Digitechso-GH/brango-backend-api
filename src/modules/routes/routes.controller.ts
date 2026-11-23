@@ -13,23 +13,23 @@ export class RoutesController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
-  async createRoute(@Body() dto: CreateRouteDto) {
-    return this.routesService.createRoute(dto);
+  async createRoute(@Body() dto: CreateRouteDto, @Request() req: any) {
+    return this.routesService.createRoute(dto, req.user?.tenantId);
   }
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
-  async getRoutes(@Query() query: GetRoutesQueryDto) {
-    return this.routesService.findAll(query);
+  async getRoutes(@Query() query: GetRoutesQueryDto, @Request() req: any) {
+    return this.routesService.findAll(query, req.user?.tenantId);
   }
 
   @Get('mobile')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.SYS_DRIVER)
-  async getMobileRoutes(@Request() req: any, @Query('driverId') queryDriverId?: string) {
-    const target = req.user.driverId || queryDriverId || req.user.sub;
-    return this.routesService.getMobileRoutes(target);
+  async getMobileRoutes(@Request() req: any) {
+    const target = req.user.driverId || req.user.sub;
+    return this.routesService.getMobileRoutes(target, req.user?.tenantId);
   }
 
   @Get(':id')
@@ -85,8 +85,9 @@ export class RoutesController {
 
   @Post(':id/complete')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_OPERATOR)
-  async completeRoute(@Param('id') id: string) {
-    return this.routesService.completeRoute(id);
+  @Roles(ROLES.SYS_DRIVER, ROLES.SYS_ADMIN, ROLES.SYS_COORDINATOR, ROLES.SYS_OPERATOR)
+  async completeRoute(@Param('id') id: string, @Request() req: any) {
+    const driverId = req.user?.role === ROLES.SYS_DRIVER ? req.user?.driverId : undefined;
+    return this.routesService.completeRoute(id, req.user?.tenantId, driverId);
   }
 }

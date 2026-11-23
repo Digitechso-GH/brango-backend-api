@@ -36,7 +36,7 @@ export class AyraWebhookChannel {
       if (!commercialPhone) continue;
 
       const driverName = fa.driver?.user?.name || 'Transportista';
-      const plate = fa.driver?.unit || fa.vehicle?.plate || '';
+      const plate = fa.vehicle?.plate || '';
       const carrierName = plate ? `${driverName} (${plate})` : driverName;
 
       await this.postWebhook(cfg, {
@@ -77,7 +77,7 @@ export class AyraWebhookChannel {
     const originCode =
       fa.status === AssignmentStatus.OBSERVED ? 'OBSERVED' : 'DELIVERED';
     const driverName = fa.driver?.user?.name || 'Transportista';
-    const plate = fa.driver?.unit || fa.vehicle?.plate || '';
+    const plate = fa.vehicle?.plate || '';
     const carrierName = plate ? `${driverName} (${plate})` : driverName;
     const latestEvidence = fa.evidences[0];
 

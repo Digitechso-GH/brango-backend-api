@@ -13,7 +13,7 @@ import * as bcrypt from 'bcryptjs';
 export class DriversService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateDriverDto) {
+  async create(dto: CreateDriverDto, tenantId?: string) {
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -39,14 +39,19 @@ export class DriversService {
           name: dto.name,
           password: hashedPassword,
           roleId: driverRole.id,
+          active: dto.active ?? true,
+          ...(tenantId ? { tenantId } : {}),
         },
       });
 
       const profile = await tx.driverProfile.create({
         data: {
           userId: user.id,
-          unit: dto.unit || null,
           phone: dto.phone || null,
+          licenseNumber: dto.licenseNumber?.trim() || null,
+          licenseCategory: dto.licenseCategory || null,
+          active: dto.active ?? true,
+          ...(tenantId ? { tenantId } : {}),
         },
         include: { user: true },
       });
@@ -55,9 +60,9 @@ export class DriversService {
     });
   }
 
-  async update(id: string, dto: UpdateDriverDto) {
-    const profile = await this.prisma.driverProfile.findUnique({
-      where: { id },
+  async update(id: string, dto: UpdateDriverDto, tenantId?: string) {
+    const profile = await this.prisma.driverProfile.findFirst({
+      where: { id, ...(tenantId ? { tenantId } : {}) },
       include: { user: true },
     });
     if (!profile) {
@@ -78,13 +83,16 @@ export class DriversService {
     const userUpdateData: any = {};
     if (dto.name) userUpdateData.name = dto.name;
     if (dto.email) userUpdateData.email = dto.email;
+    if (dto.active !== undefined) userUpdateData.active = dto.active;
     if (dto.password) {
       userUpdateData.password = await bcrypt.hash(dto.password, 10);
     }
 
     const profileUpdateData: any = {};
-    if (dto.unit !== undefined) profileUpdateData.unit = dto.unit;
     if (dto.phone !== undefined) profileUpdateData.phone = dto.phone;
+    if (dto.licenseNumber !== undefined) profileUpdateData.licenseNumber = dto.licenseNumber?.trim() || null;
+    if (dto.licenseCategory !== undefined) profileUpdateData.licenseCategory = dto.licenseCategory;
+    if (dto.active !== undefined) profileUpdateData.active = dto.active;
 
     return this.prisma.$transaction(async (tx) => {
       if (Object.keys(userUpdateData).length > 0) {
@@ -104,20 +112,25 @@ export class DriversService {
     });
   }
 
-  async findAll() {
+  async findAll(tenantId?: string) {
     return this.prisma.driverProfile.findMany({
+      where: tenantId ? { tenantId } : undefined,
       include: { user: true },
       orderBy: { user: { name: 'asc' } },
     });
   }
 
-  async findAvailable(dateStr?: string) {
+  async findAvailable(dateStr?: string, tenantId?: string, excludeRouteId?: string) {
     const { startOfDay, endOfDay } = getLimaDayRange(dateStr);
 
     return this.prisma.driverProfile.findMany({
       where: {
+        ...(tenantId ? { tenantId } : {}),
+        active: true,
+        user: { active: true },
         routes: {
           none: {
+            ...(excludeRouteId ? { id: { not: excludeRouteId } } : {}),
             date: {
               gte: startOfDay,
               lte: endOfDay,
@@ -125,20 +138,17 @@ export class DriversService {
             status: {
               in: ['PENDING', 'IN_PROGRESS'],
             },
-            assignments: {
-              some: { voidedAt: null },
-            },
-          }
-        }
+          },
+        },
       },
       include: { user: true },
       orderBy: { user: { name: 'asc' } },
     });
   }
 
-  async findOne(id: string) {
-    const profile = await this.prisma.driverProfile.findUnique({
-      where: { id },
+  async findOne(id: string, tenantId?: string) {
+    const profile = await this.prisma.driverProfile.findFirst({
+      where: { id, ...(tenantId ? { tenantId } : {}) },
       include: { user: true },
     });
     if (!profile) {
@@ -147,9 +157,9 @@ export class DriversService {
     return profile;
   }
 
-  async delete(id: string) {
-    const profile = await this.prisma.driverProfile.findUnique({
-      where: { id },
+  async delete(id: string, tenantId?: string) {
+    const profile = await this.prisma.driverProfile.findFirst({
+      where: { id, ...(tenantId ? { tenantId } : {}) },
       include: { assignments: true },
     });
     if (!profile) {
