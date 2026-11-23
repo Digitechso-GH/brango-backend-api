@@ -76,7 +76,9 @@ export class OrdersLifecycleService {
 
     let finalFormatted = dto.formattedAddress;
     if (!finalFormatted || finalFormatted.startsWith('http')) {
-      finalFormatted = cleanAddress && !cleanAddress.startsWith('http') ? cleanAddress : undefined;
+      finalFormatted =
+        geo.addressText ||
+        (cleanAddress && !cleanAddress.startsWith('http') ? cleanAddress : undefined);
     }
 
     const resolvedCustomerId = await this.clientResolverService.resolveOrCreateClient({

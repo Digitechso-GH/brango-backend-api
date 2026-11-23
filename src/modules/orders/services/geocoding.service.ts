@@ -23,10 +23,24 @@ export class GeocodingService {
   ): Promise<GeocodeResult> {
     try {
       const res = await resolveGeocodingFromUrl(addressText, inputLat, inputLng);
+      let resolvedAddressText: string | null = null;
+
+      if (
+        res.lat !== null &&
+        res.lng !== null &&
+        (addressText.startsWith('http') || addressText.includes('maps') || addressText.includes('goo.gl'))
+      ) {
+        const rev = await this.reverseGeocodeCoords(res.lat, res.lng);
+        if (rev && !rev.includes('Dirección no encontrada')) {
+          resolvedAddressText = rev;
+        }
+      }
+
       return {
         lat: res.lat,
         lng: res.lng,
         status: res.status || 'SUCCESS',
+        addressText: resolvedAddressText,
       };
     } catch (err: any) {
       this.logger.error(`Error geocodificando dirección "${addressText}": ${err.message}`);

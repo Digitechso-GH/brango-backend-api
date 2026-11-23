@@ -210,9 +210,11 @@ export class OrdersExcelParserService {
     );
 
     const finalMappedRows = rawParsedRows.map((item) => {
-      const geo = geocodeCacheMap.get(item.rawAddress) || { lat: null, lng: null, status: 'FAILED' };
+      const geo = geocodeCacheMap.get(item.rawAddress) || { lat: null, lng: null, status: 'FAILED', addressText: null };
+      const hasRealAddress = item.formattedAddress && !item.formattedAddress.startsWith('http');
       return {
         ...item,
+        formattedAddress: hasRealAddress ? item.formattedAddress : (geo.addressText || item.formattedAddress),
         latitude: geo.lat,
         longitude: geo.lng,
         geocodingStatus: geo.status || 'FAILED',
