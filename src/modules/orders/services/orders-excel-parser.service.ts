@@ -76,8 +76,10 @@ export class OrdersExcelParserService {
     const dataRows = rawMatrix.slice(1);
     const headerRow = (rawMatrix[0] || []).map((h: any) => String(h || '').trim());
 
-    // 1. Detección dinámica de columnas por encabezados (soporta FECHA VENC. como Columna A / 0)
-    let dueDateColIdx = headerRow.findIndex((h: string) => /venc|fecha.*venc|due.*date|plazo/i.test(h));
+    // 1. Detección dinámica de columnas por encabezados (soporta FECHA VENC., FECHA DE DESPACHO, etc.)
+    let dueDateColIdx = headerRow.findIndex((h: string) =>
+      /venc|fecha.*venc|due.*date|plazo|despacho|fecha.*despacho|entrega|fecha.*entrega|programad/i.test(h)
+    );
     let codeColIdx = headerRow.findIndex((h: string) => /^(n[ºo°]?\s*)?pedido|c[oó]digo/i.test(h));
     let waybillColIdx = headerRow.findIndex((h: string) => /gu[ií]a|remisi[oó]n|waybill/i.test(h));
     let nameColIdx = headerRow.findIndex((h: string) => /cliente|nombre|raz[oó]n/i.test(h));

@@ -114,6 +114,7 @@ export class OrdersQueryService {
         isPaused: false,
         OR: [
           { createdAt: { gte: startOfDay, lte: endOfDay } },
+          { dueDate: { gte: startOfDay, lte: endOfDay } },
           {
             assignments: {
               none: { voidedAt: null },
