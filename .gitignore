@@ -21,3 +21,6 @@ GEMINI.md
 brain/
 scratch/
 *.tsbuildinfo
+db-credentials.local.txt
+*.local.txt
+
