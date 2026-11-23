@@ -83,7 +83,15 @@ export class TenantsService {
 
   async update(
     id: string,
-    dto: { name?: string; tradeName?: string; ruc?: string; planTier?: PlanTier; status?: TenantStatus },
+    dto: {
+      name?: string;
+      tradeName?: string;
+      ruc?: string;
+      planTier?: PlanTier;
+      status?: TenantStatus;
+      managerId?: string;
+      managerEmail?: string;
+    },
   ) {
     const tenant = await this.prisma.tenant.findUnique({ where: { id } });
     if (!tenant) {
@@ -106,15 +114,59 @@ export class TenantsService {
       }
     }
 
-    return this.prisma.tenant.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-        ...(dto.tradeName !== undefined ? { tradeName: dto.tradeName?.trim() || null } : {}),
-        ...(cleanRuc !== undefined ? { ruc: cleanRuc } : {}),
-        ...(dto.planTier !== undefined ? { planTier: dto.planTier } : {}),
-        ...(dto.status !== undefined ? { status: dto.status } : {}),
-      },
+    let targetManagerId: string | undefined;
+    let cleanManagerEmail: string | undefined;
+
+    if (dto.managerEmail !== undefined) {
+      cleanManagerEmail = dto.managerEmail.toLowerCase().trim();
+      if (!cleanManagerEmail) {
+        throw new BadRequestException('El correo no puede estar vacío');
+      }
+
+      const targetManager = dto.managerId
+        ? await this.prisma.user.findFirst({
+            where: { id: dto.managerId, tenantId: id },
+          })
+        : await this.prisma.user.findFirst({
+            where: { tenantId: id, role: { code: ROLES.SYS_ADMIN } },
+            orderBy: { createdAt: 'asc' },
+          });
+
+      if (!targetManager) {
+        throw new NotFoundException('Gerente de la empresa no encontrado');
+      }
+
+      if (cleanManagerEmail !== targetManager.email) {
+        const existingEmail = await this.prisma.user.findUnique({
+          where: { email: cleanManagerEmail },
+        });
+        if (existingEmail && existingEmail.id !== targetManager.id) {
+          throw new BadRequestException(`El correo ${cleanManagerEmail} ya está en uso por otro usuario`);
+        }
+        targetManagerId = targetManager.id;
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updatedTenant = await tx.tenant.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+          ...(dto.tradeName !== undefined ? { tradeName: dto.tradeName?.trim() || null } : {}),
+          ...(cleanRuc !== undefined ? { ruc: cleanRuc } : {}),
+          ...(dto.planTier !== undefined ? { planTier: dto.planTier } : {}),
+          ...(dto.status !== undefined ? { status: dto.status } : {}),
+        },
+      });
+
+      if (targetManagerId && cleanManagerEmail) {
+        await tx.user.update({
+          where: { id: targetManagerId },
+          data: { email: cleanManagerEmail },
+        });
+      }
+
+      return updatedTenant;
     });
   }
 

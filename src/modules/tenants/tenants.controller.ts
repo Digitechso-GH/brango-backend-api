@@ -61,6 +61,8 @@ export class TenantsController {
       ruc?: string;
       planTier?: PlanTier;
       status?: TenantStatus;
+      managerId?: string;
+      managerEmail?: string;
     },
   ) {
     return this.tenantsService.update(id, body);
